@@ -1,4 +1,4 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import superjson from "superjson";
 
@@ -29,3 +29,32 @@ const t = initTRPC
 export const createTRPCRouter = t.router;
 export const createCallerFactory = t.createCallerFactory;
 export const baseProcedure = t.procedure;
+
+export const authenticatedProcedure = t.procedure.use(async (opts) => {
+  const {
+    ctx: { user },
+  } = opts;
+
+  if (!user) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+
+  return opts.next(opts);
+});
+
+export const authorizedProdcedure = (permission: string) =>
+  authenticatedProcedure.use(async (opts) => {
+    const {
+      ctx: { user },
+    } = opts;
+
+    if (!user) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+
+    if (!user.permissions?.includes(permission)) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+
+    return opts.next(opts);
+  });

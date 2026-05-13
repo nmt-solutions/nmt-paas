@@ -1,6 +1,5 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -10,14 +9,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useTRPC } from "@/trpc/client";
 
 export function ToggleTheme() {
   const { setTheme } = useTheme();
-
-  const trpc = useTRPC();
-
-  const { data } = useQuery(trpc.hello.queryOptions({ text: "I am tauqeer" }));
 
   return (
     <DropdownMenu>
@@ -37,10 +31,6 @@ export function ToggleTheme() {
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setTheme("system")}>
           System
-        </DropdownMenuItem>
-
-        <DropdownMenuItem onClick={() => setTheme("system")}>
-          {data?.greeting}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
