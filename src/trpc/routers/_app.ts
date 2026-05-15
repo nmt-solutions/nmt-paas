@@ -1,8 +1,8 @@
 import { createTRPCRouter } from "../init";
-import { userRouter } from "./user";
+import { githubRouter } from "./github.trpc";
 
 export const appRouter = createTRPCRouter({
-  user: userRouter,
+  github: githubRouter,
 });
 
 // export type definition of API
