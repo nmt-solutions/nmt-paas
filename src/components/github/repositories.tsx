@@ -138,7 +138,9 @@ const Repositories = () => {
               </Card>
             ))}
           </div>
-          <Pagination id="repositories" data={results} />
+          <div className="px-2">
+            <Pagination id="repositories" data={results} />
+          </div>
         </>
       )}
     </div>

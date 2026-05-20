@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { App, RequestError } from "octokit";
-import { FRAMEWORK_DEFAULT_CONFIGS } from "@/constants/frameworks";
+import { FRAMEWORK_PRESETS } from "@/constants/frameworks";
 import { getUserAppInstall } from "@/database/access-layer/github.dal";
 import env from "@/env/vars";
 import type { FrameworkDefaultConfig } from "@/models/framework";
@@ -111,17 +111,17 @@ export async function getGithubRepoFrameworkPreset(
   }
 
   if (!Array.isArray(rootContents.data)) {
-    return FRAMEWORK_DEFAULT_CONFIGS.node;
+    return FRAMEWORK_PRESETS("github").unknown;
   }
 
   const fileNames = rootContents.data.map((file) => file.name);
 
   if (fileNames.includes("Dockerfile")) {
-    return FRAMEWORK_DEFAULT_CONFIGS.docker;
+    return FRAMEWORK_PRESETS("github").docker;
   }
 
   if (!fileNames.includes("package.json")) {
-    return FRAMEWORK_DEFAULT_CONFIGS.node;
+    return FRAMEWORK_PRESETS("github").unknown;
   }
 
   const { data: packageJsonResponse, error: packageJsonResponseError } =
@@ -147,7 +147,7 @@ export async function getGithubRepoFrameworkPreset(
     Array.isArray(packageJsonResponse.data) ||
     !("content" in packageJsonResponse.data)
   ) {
-    return FRAMEWORK_DEFAULT_CONFIGS.node;
+    return FRAMEWORK_PRESETS("github").node;
   }
 
   const packageJsonContent = Buffer.from(
@@ -168,7 +168,7 @@ export async function getGithubRepoFrameworkPreset(
     fileNames.includes("next.config.js") ||
     fileNames.includes("next.config.ts")
   ) {
-    return FRAMEWORK_DEFAULT_CONFIGS.nextjs;
+    return FRAMEWORK_PRESETS("github").nextjs;
   }
 
   // Vite
@@ -177,14 +177,13 @@ export async function getGithubRepoFrameworkPreset(
     fileNames.includes("vite.config.ts") ||
     fileNames.includes("vite.config.js")
   ) {
-    return FRAMEWORK_DEFAULT_CONFIGS.vite;
+    return FRAMEWORK_PRESETS("github").vite;
   }
 
   // React
   if (dependencies.react || dependencies["react-scripts"]) {
-    return FRAMEWORK_DEFAULT_CONFIGS.react;
+    return FRAMEWORK_PRESETS("github").react;
   }
 
-  // Generic Node.js
-  return FRAMEWORK_DEFAULT_CONFIGS.node;
+  return FRAMEWORK_PRESETS("github").unknown;
 }

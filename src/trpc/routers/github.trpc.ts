@@ -128,20 +128,22 @@ export const githubRouter = createTRPCRouter({
       });
     }
 
-    const repos = repositories.data.repositories.map((repo) => ({
-      id: repo.id,
-      defaultBranch: repo.default_branch,
-      name: repo.name,
-      owner: { id: repo.owner.id, name: repo.owner.login },
-      private: repo.private,
-      slug: repo.html_url.split("/").at(-1) as string,
-      updatedAt: (repo.updated_at
-        ? Date.parse(repo.updated_at)
-        : repo.created_at
-          ? Date.parse(repo.created_at)
-          : null) as number,
-      url: repo.html_url,
-    }));
+    const repos = repositories.data.repositories
+      .map((repo) => ({
+        id: repo.id,
+        defaultBranch: repo.default_branch,
+        name: repo.name,
+        owner: { id: repo.owner.id, name: repo.owner.login },
+        private: repo.private,
+        slug: repo.html_url.split("/").at(-1) as string,
+        updatedAt: (repo.updated_at
+          ? Date.parse(repo.updated_at)
+          : repo.created_at
+            ? Date.parse(repo.created_at)
+            : null) as number,
+        url: repo.html_url,
+      }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
 
     return { ...repositories.data, repositories: repos };
   }),

@@ -1,9 +1,8 @@
 import type { Framework, FrameworkDefaultConfig } from "@/models/framework";
 
-export const FRAMEWORK_DEFAULT_CONFIGS: Record<
-  Framework,
-  FrameworkDefaultConfig
-> = {
+export const FRAMEWORK_PRESETS = (
+  provider: "github",
+): Record<Framework, FrameworkDefaultConfig> => ({
   docker: {
     framework: "docker",
     installCommand: "",
@@ -48,4 +47,13 @@ export const FRAMEWORK_DEFAULT_CONFIGS: Record<
     outputDirectory: "",
     iconUrl: "/assets/frameworks/nodejs.svg",
   },
-};
+
+  unknown: {
+    framework: "unknown",
+    installCommand: "npm install",
+    buildCommand: "npm install",
+    startCommand: "npm start",
+    outputDirectory: "",
+    iconUrl: `/assets/frameworks/${provider}.svg`,
+  },
+});
