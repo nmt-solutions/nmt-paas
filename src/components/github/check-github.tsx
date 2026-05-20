@@ -1,33 +1,47 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { useState } from "react";
 import { useTRPC } from "@/trpc/client";
-import { Button } from "../ui/button";
 import { Toast } from "../toast/toast";
+import { Button } from "../ui/button";
 
 const CheckGithub = () => {
+  const [enabled, setEnabled] = useState(false);
+
   const trpc = useTRPC();
 
-  const {
-    data,
-    isPending,
-    mutate: getApp,
-    isError,
-    error,
-  } = useMutation(trpc.github.getGithubAppForUser.mutationOptions());
+  const queryOptions = trpc.github.getGithubAppForUser.queryOptions();
+
+  const { data, isFetching, isError, error } = useQuery({
+    ...queryOptions,
+    enabled,
+  });
+
+  const queryClient = useQueryClient();
+
+  const checkConnection = () => {
+    if (enabled) {
+      queryClient.invalidateQueries({ queryKey: queryOptions.queryKey });
+    } else {
+      setEnabled(true);
+    }
+  };
 
   return (
     <>
       <Button
-        disabled={isPending}
-        onClick={() => getApp()}
+        disabled={isFetching}
+        onClick={() => checkConnection()}
         className="flex gap-2 items-center"
       >
-        {isPending && <Loader2 className="animate-spin" />}
+        {isFetching && <Loader2 className="animate-spin" />}
         <span>Check Github Connection</span>
       </Button>
-      {data && <pre>{JSON.stringify(data, null, 2)}</pre>}
+
+      {data && <p>{data.appName}</p>}
+
       {isError && error && (
         <Toast
           id="github-connection-error"

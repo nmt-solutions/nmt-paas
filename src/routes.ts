@@ -1,4 +1,10 @@
-import { Home, LayoutDashboard, type Loader2 } from "lucide-react";
+import {
+  FileBox,
+  Grid2x2,
+  Home,
+  LayoutDashboard,
+  type Loader2,
+} from "lucide-react";
 import { match } from "path-to-regexp";
 
 export type Route = {
@@ -26,6 +32,22 @@ export const appRoutes: Route[] = [
     isProtected: true,
     sidebar: true,
     isSidebarItem: true,
+  },
+  {
+    label: "Projects",
+    path: "/projects",
+    icon: Grid2x2,
+    isProtected: true,
+    sidebar: true,
+    isSidebarItem: true,
+  },
+  {
+    label: "New Project",
+    path: "/projects/new",
+    icon: FileBox,
+    isProtected: true,
+    sidebar: true,
+    isSidebarItem: false,
   },
 ];
 
