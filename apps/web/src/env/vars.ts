@@ -20,14 +20,6 @@ const EnvVarsSchema = z.object({
     .string()
     .nonempty({ error: "NEXT_PUBLIC_WORKOS_REDIRECT_URI is required." })
     .nonoptional({ error: "NEXT_PUBLIC_WORKOS_REDIRECT_URI is required." }),
-  DEV_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "DEV_DATABASE_URL is required." })
-    .nonoptional({ error: "DEV_DATABASE_URL is required." }),
-  PROD_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "PROD_DATABASE_URL is required." })
-    .nonoptional({ error: "PROD_DATABASE_URL is required." }),
   GITHUB_APP_ID: z
     .string()
     .nonempty({})
