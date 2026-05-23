@@ -1,0 +1,1 @@
+{"root":["./src/common.ts","./src/enums.ts","./src/index.ts","./src/relations.ts","./src/schema.ts","./src/access-layer/github.dal.ts","./src/env/vars.ts","./src/tables/github.ts","./src/utils/types.ts"],"version":"5.9.2"}

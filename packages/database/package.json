@@ -1,0 +1,46 @@
+{
+  "name": "@repo/database",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./access-layer/*": {
+      "types": "./dist/access-layer/*.d.ts",
+      "import": "./dist/access-layer/*.js",
+      "default": "./dist/access-layer/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "db-gen": "pnpm dlx drizzle-kit generate",
+    "db-mig": "pnpm dlx drizzle-kit migrate",
+    "db-studio": "pnpm dlx drizzle-kit studio"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@repo/eslint-config": "workspace:*",
+    "@repo/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.1",
+    "tsx": "^4.22.0",
+    "typescript": "5.9.2"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.20.0",
+    "zod": "^4.4.3"
+  }
+}
