@@ -1,0 +1,35 @@
+services:
+  traefik:
+    image: traefik:v3.6.1
+    restart: unless-stopped
+
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=app-network
+
+      - --entrypoints.web.address=:80
+      - --entrypoints.redis.address=:6379
+
+    ports:
+      - "80:80"
+      - "8080:8080"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`rpi4.nmtsolutions.in`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))"
+      - "traefik.http.routers.dashboard.entrypoints=web"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.priority=100"
+
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    external: true

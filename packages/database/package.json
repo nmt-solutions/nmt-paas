@@ -10,10 +10,20 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "default": "./dist/schema.js"
+    },
     "./access-layer/*": {
       "types": "./dist/access-layer/*.d.ts",
       "import": "./dist/access-layer/*.js",
       "default": "./dist/access-layer/*.js"
+    },
+    "./drizzle-orm": {
+      "types": "./dist/drizzle.d.ts",
+      "import": "./dist/drizzle.js",
+      "default": "./dist/drizzle.js"
     }
   },
   "scripts": {
