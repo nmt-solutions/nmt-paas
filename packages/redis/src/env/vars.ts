@@ -22,6 +22,10 @@ const EnvVarsSchema = z.object({
     .nonempty({ error: "REDIS_PORT is required." })
     .nonoptional({ error: "REDIS_PORT is required." })
     .transform((val) => Number.parseInt(val, 10)),
+  REDIS_PASSWORD: z
+    .string()
+    .nonempty({ error: "REDIS_PASSWORD is required." })
+    .nonoptional({ error: "REDIS_PASSWORD is required." }),
 });
 
 const {

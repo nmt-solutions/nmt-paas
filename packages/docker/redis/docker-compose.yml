@@ -9,6 +9,9 @@ services:
       --appendonly yes
       --requirepass WyXNQPXTpQkPDUDqna7LomMgfn53Rsec
 
+    ports:
+      - "6379:6379"
+
     volumes:
       - redis-data:/data
 
