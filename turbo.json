@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "outputs": [".next/**", "!.next/cache/**"],
+      "env": [
+        "APP_ENV",
+        "APP_PORT",
+        "DB_ENV",
+        "WORKOS_CLIENT_ID",
+        "WORKOS_API_KEY",
+        "WORKOS_COOKIE_PASSWORD",
+        "NEXT_PUBLIC_WORKOS_REDIRECT_URI",
+        "DEV_DATABASE_URL",
+        "PROD_DATABASE_URL",
+        "GITHUB_APP_ID",
+        "GITHUB_APP_SLUG",
+        "GITHUB_APP_PRIVATE_KEY"
+      ]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
