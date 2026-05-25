@@ -6,5 +6,7 @@ allowBuilds:
   msgpackr-extract: true
   msw: true
   sharp: true
+  drizzle-kit: true
+  drizzle-orm: true
 minimumReleaseAgeExclude:
   - bullmq@5.77.1

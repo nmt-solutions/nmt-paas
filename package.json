@@ -7,6 +7,9 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
+    "db-gen": "turbo run db-gen",
+    "db-mig": "turbo run db-mig",
+    "db-studio": "turbo run db-studio",
     "docker": "chmod +x ./scripts/docker.sh && ./scripts/docker.sh"
   },
   "devDependencies": {

@@ -1,17 +1,17 @@
-import ImportRepository from "@/components/github/import-repository";
+import NewProject from "@/components/repositories/new-project";
 import Search from "@/components/search/search";
 import { Separator } from "@/components/ui/separator";
 
-const NewProject = () => {
+const NewProjectPage = () => {
   return (
     <div>
       <Search placeholder="Enter a Git Repository URL" />
       <Separator orientation="horizontal" className="my-8" />
       <div className="flex items-center justify-center">
-        <ImportRepository />
+        <NewProject />
       </div>
     </div>
   );
 };
 
-export default NewProject;
+export default NewProjectPage;

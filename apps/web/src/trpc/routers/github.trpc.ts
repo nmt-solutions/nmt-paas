@@ -1,20 +1,20 @@
 import { TRPCError } from "@trpc/server";
 
 import z from "zod";
-import { INT_32_MAX } from "@/constants/common";
 
 import env from "@/env/vars";
 import {
+  getGithubRepositories,
   getUserGithubOctokit,
   getUserGithubOctokitByInstallationId,
 } from "@/services/github";
 import { tryCatch } from "@/utils/try-catch";
-import { authenticatedProcedure, createTRPCRouter } from "../init";
 import {
   createUserAppInstall,
   getUserAppInstall,
   updateUserAppInstall,
 } from "@repo/database/access-layer/github.dal";
+import { authenticatedProcedure, createTRPCRouter } from "../init";
 
 export const githubRouter = createTRPCRouter({
   connectGithub: authenticatedProcedure.mutation(async ({ ctx }) => {
@@ -112,40 +112,6 @@ export const githubRouter = createTRPCRouter({
   getUserGithubRepos: authenticatedProcedure.query(async ({ ctx }) => {
     const userId = ctx.userInfo.user.id;
 
-    const { octokit, installationId } = await getUserGithubOctokit(userId);
-
-    const { data: repositories, error: fetchUserReposError } = await tryCatch(
-      octokit.request("GET /installation/repositories", {
-        installation_id: installationId,
-        page: 1,
-        per_page: INT_32_MAX,
-      }),
-    );
-
-    if (fetchUserReposError) {
-      throw new TRPCError({
-        code: "BAD_GATEWAY",
-        message: fetchUserReposError.message,
-      });
-    }
-
-    const repos = repositories.data.repositories
-      .map((repo) => ({
-        id: repo.id,
-        defaultBranch: repo.default_branch,
-        name: repo.name,
-        owner: { id: repo.owner.id, name: repo.owner.login },
-        private: repo.private,
-        slug: repo.html_url.split("/").at(-1) as string,
-        updatedAt: (repo.updated_at
-          ? Date.parse(repo.updated_at)
-          : repo.created_at
-            ? Date.parse(repo.created_at)
-            : null) as number,
-        url: repo.html_url,
-      }))
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-
-    return { ...repositories.data, repositories: repos };
+    return getGithubRepositories(userId);
   }),
 });

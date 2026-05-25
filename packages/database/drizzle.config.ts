@@ -4,7 +4,7 @@ import env from "./src/env/vars";
 
 const config: Config & { dbCredentials: { url: string } } = {
   out: "./database/development",
-  schema: "./src/database/schema.ts",
+  schema: "./src/schema.ts",
   dialect: "postgresql",
   dbCredentials: {
     url: env.variables.DEV_DATABASE_URL,
@@ -17,6 +17,6 @@ if (env.variables.DB_ENV === "production") {
 }
 
 console.log("Drizzle Config:");
-console.table(config);
+console.log(JSON.stringify(config, null, 2));
 
 export default defineConfig(config);

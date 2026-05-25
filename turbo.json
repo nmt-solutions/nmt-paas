@@ -30,6 +30,15 @@
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "db-gen": {
+      "cache": false
+    },
+    "db-mig": {
+      "cache": false
+    },
+    "db-studio": {
+      "cache": false
     }
   }
 }

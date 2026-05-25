@@ -1,10 +1,11 @@
-import type { Framework, FrameworkDefaultConfig } from "@/models/framework";
+import type { Framework, FrameworkConfigPreset } from "@/models/framework";
 
 export const FRAMEWORK_PRESETS = (
   provider: "github",
-): Record<Framework, FrameworkDefaultConfig> => ({
+): Record<Framework, FrameworkConfigPreset> => ({
   docker: {
     framework: "docker",
+    rootDirectory: "./",
     installCommand: "",
     buildCommand: "docker build -t app .",
     startCommand: "docker run -p 3000:3000 app",
@@ -14,6 +15,7 @@ export const FRAMEWORK_PRESETS = (
 
   vite: {
     framework: "vite",
+    rootDirectory: "./",
     installCommand: "npm install",
     buildCommand: "npm run build",
     startCommand: "npm run preview",
@@ -23,6 +25,7 @@ export const FRAMEWORK_PRESETS = (
 
   nextjs: {
     framework: "nextjs",
+    rootDirectory: "apps/web",
     installCommand: "npm install",
     buildCommand: "npm run build",
     startCommand: "npm start",
@@ -32,6 +35,7 @@ export const FRAMEWORK_PRESETS = (
 
   react: {
     framework: "react",
+    rootDirectory: "/",
     installCommand: "npm install",
     buildCommand: "npm run build",
     startCommand: "npx serve -s build",
@@ -41,6 +45,7 @@ export const FRAMEWORK_PRESETS = (
 
   node: {
     framework: "node",
+    rootDirectory: "/",
     installCommand: "npm install",
     buildCommand: "npm install",
     startCommand: "npm start",
@@ -50,6 +55,7 @@ export const FRAMEWORK_PRESETS = (
 
   unknown: {
     framework: "unknown",
+    rootDirectory: "/",
     installCommand: "npm install",
     buildCommand: "npm install",
     startCommand: "npm start",

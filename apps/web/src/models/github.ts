@@ -4,3 +4,8 @@ export type GithubApp = {
   slug?: string;
   description?: string;
 };
+
+export type GithubUser = {
+  id: number;
+  login: string;
+};

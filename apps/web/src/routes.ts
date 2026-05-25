@@ -49,6 +49,14 @@ export const appRoutes: Route[] = [
     sidebar: true,
     isSidebarItem: false,
   },
+  {
+    label: "Import Project",
+    path: "/projects/new/import/:repoId",
+    icon: FileBox,
+    isProtected: true,
+    sidebar: true,
+    isSidebarItem: false,
+  },
 ];
 
 export const getActiveRoute = (pathname: string) => {

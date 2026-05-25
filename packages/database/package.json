@@ -30,9 +30,9 @@
     "build": "tsc -b",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
-    "db-gen": "pnpm dlx drizzle-kit generate",
-    "db-mig": "pnpm dlx drizzle-kit migrate",
-    "db-studio": "pnpm dlx drizzle-kit studio"
+    "db-gen": "pnpm drizzle-kit generate",
+    "db-mig": "pnpm drizzle-kit migrate",
+    "db-studio": "pnpm drizzle-kit studio"
   },
   "keywords": [],
   "author": "",

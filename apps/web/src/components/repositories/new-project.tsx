@@ -10,10 +10,10 @@ import {
   CardHeader,
   CardTitle,
 } from "../ui/card";
-import ConnectGithub from "./connect-github";
 import Repositories from "./repositories";
+import ConnectGithub from "../github/connect-github";
 
-const ImportRepository = () => {
+const NewProject = () => {
   const trpc = useTRPC();
 
   const { isLoading, data } = useQuery(
@@ -45,4 +45,4 @@ const ImportRepository = () => {
   );
 };
 
-export default ImportRepository;
+export default NewProject;

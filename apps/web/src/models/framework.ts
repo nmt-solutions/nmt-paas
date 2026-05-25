@@ -6,8 +6,9 @@ export type Framework =
   | "node"
   | "unknown";
 
-export type FrameworkDefaultConfig = {
+export type FrameworkConfigPreset = {
   framework: Framework;
+  rootDirectory: string;
   installCommand: string;
   buildCommand: string;
   startCommand: string;
