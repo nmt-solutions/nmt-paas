@@ -8,7 +8,7 @@ COMMAND=$1
 shift
 
 if [ -z "$COMMAND" ]; then
-  echo "Usage: pnpm docker <command>"
+  echo "Usage: npm run docker <command>"
   exit 1
 fi
 

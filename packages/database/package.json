@@ -30,16 +30,16 @@
     "build": "tsc -b",
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
-    "db-gen": "pnpm drizzle-kit generate",
-    "db-mig": "pnpm drizzle-kit migrate",
-    "db-studio": "pnpm drizzle-kit studio"
+    "db-gen": "npx drizzle-kit generate",
+    "db-mig": "npx drizzle-kit migrate",
+    "db-studio": "npx drizzle-kit studio"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@repo/eslint-config": "workspace:*",
-    "@repo/typescript-config": "workspace:*",
+    "@repo/eslint-config": "*",
+    "@repo/typescript-config": "*",
     "@types/node": "^22.15.3",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "^0.31.10",
