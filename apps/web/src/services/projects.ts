@@ -112,15 +112,18 @@ export const initializeNewProjectAndDeploy = async ({
     });
   }
 
-  const app = await createApp({
-    repoId,
-    projectId: project.id,
-    createdBy: userId,
-    appName: repository.html_url.split("/").at(-1)?.toLowerCase() as string,
-    gitProvider: "github",
-  });
+  const { data: app, error } = await tryCatch(
+    createApp({
+      repoId,
+      projectId: project.id,
+      createdBy: userId,
+      appName: repository.html_url.split("/").at(-1)?.toLowerCase() as string,
+      gitProvider: "github",
+    }),
+  );
 
   if (!app) {
+    console.error("Error creating app:", error);
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
       message: "Unable to create an app",

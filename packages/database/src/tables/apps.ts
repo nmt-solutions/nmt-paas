@@ -11,7 +11,7 @@ export const Apps = pgTable("Apps", {
     .notNull()
     .references(() => Projects.id),
   gitProvider: GitProvider("gitProvider").notNull(),
-  repoId: bigint({ mode: "number" }).unique().notNull(),
+  repoId: bigint({ mode: "number" }).notNull(),
   resourceStatus: ResourceStatus(),
   createdAt: timestampDefault("createdAt"),
   createdBy: text("createdBy").notNull(),

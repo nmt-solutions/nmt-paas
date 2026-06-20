@@ -155,6 +155,15 @@ const ImportRepository = ({
       .filter((ev) => ev?.key && ev?.value)
       .map((ev) => ({ key: ev!.key, value: ev!.value }));
 
+    if (frameworkPreset === null) {
+      toast({
+        title: "Framework Preset Required",
+        description: "Please select a framework preset before deploying.",
+        variant: "error",
+      });
+      return;
+    }
+
     deploy(
       {
         repoId: parseInt(repoId),
@@ -162,6 +171,7 @@ const ImportRepository = ({
         owner: data?.repository.owner.name ?? "",
         branch,
         envVars: envVarsArray,
+        frameworkConfig: { ...frameworkPreset },
       },
       {
         onError: (err) => {
