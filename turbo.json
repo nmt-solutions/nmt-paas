@@ -18,7 +18,8 @@
         "PROD_DATABASE_URL",
         "GITHUB_APP_ID",
         "GITHUB_APP_SLUG",
-        "GITHUB_APP_PRIVATE_KEY"
+        "GITHUB_APP_PRIVATE_KEY",
+        "ENV_ENCRYPTION_KEY"
       ]
     },
     "lint": {

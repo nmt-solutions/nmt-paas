@@ -42,14 +42,14 @@
     "@repo/typescript-config": "*",
     "@types/node": "^22.15.3",
     "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10",
+    "drizzle-kit": "^1.0.0-beta.22",
     "eslint": "^9.39.1",
     "tsx": "^4.22.0",
     "typescript": "5.9.2"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^1.0.0-beta.22",
     "pg": "^8.20.0",
     "zod": "^4.4.3"
   }

@@ -6,7 +6,7 @@ export const GitProvider = pgEnum("GitProvider", ["github", "bitbucket"]);
 
 export const GithubAppInstallState = pgEnum("state", ["started", "completed"]);
 
-export const ProjectEnv = pgEnum("ProjectEnv", ["preview", "production"]);
+export const AppEnv = pgEnum("AppEnv", ["preview", "production"]);
 
 export const DeploymentStatus = pgEnum("DeploymentStatus", [
   "queued",

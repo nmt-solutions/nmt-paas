@@ -1,4 +1,3 @@
-/** biome-ignore-all lint/suspicious/noArrayIndexKey: Not Needed Here*/
 "use client";
 
 import { CheckCircle, CircleX, Info, TriangleAlert, X } from "lucide-react";

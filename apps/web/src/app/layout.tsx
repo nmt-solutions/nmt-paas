@@ -7,6 +7,7 @@ import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppSidebarProvider from "@/providers/app-sidebar-provider";
 import { TRPCReactProvider } from "@/trpc/client";
+import { Toaster } from "@/components/ui/sonner";
 
 const oxanium = Oxanium({ subsets: ["latin"], variable: "--font-sans" });
 
@@ -56,6 +57,7 @@ export default function RootLayout({
                 <AppSidebarProvider>{children}</AppSidebarProvider>
               </AuthKitProvider>
             </TooltipProvider>
+            <Toaster />
           </ThemeProvider>
         </TRPCReactProvider>
       </body>

@@ -34,6 +34,10 @@ const EnvVarsSchema = z.object({
     .nonempty({ error: "GITHUB_APP_PRIVATE_KEY is required." })
     .nonoptional({ error: "GITHUB_APP_PRIVATE_KEY is required." })
     .transform((val) => val.replace(/\\n/g, "\n")),
+  ENV_ENCRYPTION_KEY: z
+    .string()
+    .nonempty({ error: "ENV_ENCRYPTION_KEY is required." })
+    .nonoptional({ error: "ENV_ENCRYPTION_KEY is required." }),
 });
 
 const {

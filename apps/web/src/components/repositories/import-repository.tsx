@@ -2,12 +2,13 @@
 
 import { FrameworkConfigPreset } from "@/models/framework";
 import { useTRPC } from "@/trpc/client";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
   File,
   FolderOpen,
   GitBranch,
+  Loader2,
   Minus,
   Pencil,
   Plus,
@@ -16,7 +17,7 @@ import {
 import Link from "next/dist/client/link";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
-import { Toast } from "../toast/toast";
+import toast, { Toast } from "../toast/toast";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import {
@@ -98,6 +99,10 @@ const ImportRepository = ({
     }
   }, [data?.frameworkPreset]);
 
+  const { isPending: isDeploying, mutate: deploy } = useMutation(
+    trpc.deployment.deploy.mutationOptions(),
+  );
+
   const importEnvVars = (content: string, evid: number) => {
     const res = parseEnvInput(content);
 
@@ -142,6 +147,39 @@ const ImportRepository = ({
 
       return updated;
     });
+  };
+
+  const deployProject = () => {
+    const envVarsArray = envVarsFields
+      .map((id) => envVars[id])
+      .filter((ev) => ev?.key && ev?.value)
+      .map((ev) => ({ key: ev!.key, value: ev!.value }));
+
+    deploy(
+      {
+        repoId: parseInt(repoId),
+        repo,
+        owner: data?.repository.owner.name ?? "",
+        branch,
+        envVars: envVarsArray,
+      },
+      {
+        onError: (err) => {
+          toast({
+            title: "Deployment Error",
+            description: err.message,
+            variant: "error",
+          });
+        },
+        onSuccess: () => {
+          toast({
+            title: "Deployment Queued",
+            description: "Your deployment has been queued successfully.",
+            variant: "success",
+          });
+        },
+      },
+    );
   };
 
   if (isError) {
@@ -525,7 +563,14 @@ const ImportRepository = ({
         </Accordion>
 
         <div className="my-4">
-          <Button className="w-full rounded-lg">Deploy</Button>
+          <Button
+            disabled={isDeploying}
+            className="w-full rounded-lg"
+            onClick={deployProject}
+          >
+            {isDeploying && <Loader2 className="animate-spin" />}
+            {isDeploying ? "Deploying..." : "Deploy"}
+          </Button>
         </div>
       </CardContent>
     </Card>

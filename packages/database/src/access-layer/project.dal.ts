@@ -9,12 +9,6 @@ export const getProject = async (projectId: number) => {
   });
 };
 
-export const getProjectByRepoId = async (repoId: number) => {
-  return database.query.Projects.findFirst({
-    where: () => eq(Projects.repoId, repoId),
-  });
-};
-
 export const getUserProjects = async (userId: string) => {
   return database.query.Projects.findMany({
     where: () =>
