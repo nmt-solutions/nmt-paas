@@ -5,7 +5,7 @@ import { redis } from "@repo/redis";
 export const deploymentQueue = new Queue<{ deploymentId: number }>(
   "deployment-queue",
   {
-    connection: redis,
+    connection: redis as any,
 
     defaultJobOptions: {
       attempts: 3,
