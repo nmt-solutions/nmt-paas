@@ -1,10 +1,10 @@
-import { eq, InferInsertModel } from "drizzle-orm";
+import { InferInsertModel } from "drizzle-orm";
 import { database } from "..";
 import { Apps } from "../schema";
 
 export const getAppByRepoId = async (repoId: number) => {
   return database.query.Apps.findFirst({
-    where: eq(Apps.repoId, repoId),
+    where: { id: repoId },
     with: {
       project: true,
     },

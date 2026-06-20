@@ -5,5 +5,4 @@ export * from "./tables/project";
 export * from "./tables/apps";
 export * from "./tables/deployment";
 export * from "./tables/env-vars";
-
-export * from "./relations";
+export * from "./tables/framework-config";

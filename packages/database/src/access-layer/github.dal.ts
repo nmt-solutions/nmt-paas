@@ -1,14 +1,11 @@
-import { and, eq, type InferSelectModel } from "drizzle-orm";
+import { eq, type InferSelectModel } from "drizzle-orm";
 import { database } from "..";
-import type { UpdateInput } from "../utils/types";
 import { GithubAppInstallations } from "../schema";
+import type { UpdateInput } from "../utils/types";
 
 export const getUserAppInstall = (userId: string) => {
   return database.query.GithubAppInstallations.findFirst({
-    where: and(
-      eq(GithubAppInstallations.userId, userId),
-      eq(GithubAppInstallations.resourceStatus, "active"),
-    ),
+    where: { userId, resourceStatus: "active" },
   });
 };
 

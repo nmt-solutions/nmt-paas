@@ -1,6 +1,6 @@
-import { and, eq, InferInsertModel } from "drizzle-orm";
-import { AppEnv, EnvVars } from "../schema";
+import { InferInsertModel } from "drizzle-orm";
 import { database } from "..";
+import { AppEnv, EnvVars } from "../schema";
 
 export const createEnvVars = async (
   params: InferInsertModel<typeof EnvVars>[],
@@ -13,10 +13,10 @@ export const getEnvVars = async (
   env: (typeof AppEnv.enumValues)[number],
 ) => {
   return database.query.EnvVars.findMany({
-    where: and(
-      eq(EnvVars.projectId, projectId),
-      eq(EnvVars.env, env),
-      eq(EnvVars.resourceStatus, "active"),
-    ),
+    where: {
+      projectId,
+      env,
+      resourceStatus: "active",
+    },
   });
 };

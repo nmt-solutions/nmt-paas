@@ -5,7 +5,7 @@ import { UpdateInput } from "../utils/types";
 
 export const getDeployment = async (deploymentId: number) => {
   return database.query.Deployments.findFirst({
-    where: eq(Deployments.id, deploymentId),
+    where: { id: deploymentId },
   });
 };
 

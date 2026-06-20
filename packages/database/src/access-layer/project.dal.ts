@@ -1,18 +1,17 @@
-import { and, eq, InferInsertModel } from "drizzle-orm";
-import { Projects } from "../schema";
+import { eq, InferInsertModel } from "drizzle-orm";
 import { database } from "..";
+import { Projects } from "../schema";
 import { UpdateInput } from "../utils/types";
 
 export const getProject = async (projectId: number) => {
   return database.query.Projects.findFirst({
-    where: () => eq(Projects.id, projectId),
+    where: { id: projectId },
   });
 };
 
 export const getUserProjects = async (userId: string) => {
   return database.query.Projects.findMany({
-    where: () =>
-      and(eq(Projects.userId, userId), eq(Projects.resourceStatus, "active")),
+    where: { userId, resourceStatus: "active" },
   });
 };
 
