@@ -58,6 +58,7 @@ export const deployProject = async (params: {
   }
 
   await deploymentQueue.add("deployment-queue", {
+    userId: params.userId,
     deploymentId: deployment.id,
   });
 };

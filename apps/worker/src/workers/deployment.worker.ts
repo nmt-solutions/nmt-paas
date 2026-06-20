@@ -6,10 +6,11 @@ import { getDeployment } from "@repo/database/access-layer/deployment.dal";
 new Worker(
   "deployment-queue",
 
-  async (job: { data: { deploymentId: number } }) => {
+  async (job: { data: { userId: string; deploymentId: number } }) => {
     console.log(job);
 
     const deploymentId = job.data.deploymentId;
+    const userId = job.data.userId;
 
     const deployment = await getDeployment(deploymentId);
 
