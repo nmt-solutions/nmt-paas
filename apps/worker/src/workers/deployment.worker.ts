@@ -2,7 +2,7 @@ import { Worker } from "bullmq";
 
 import { redis } from "@repo/redis";
 import { getDeployment } from "@repo/database/access-layer/deployment.dal";
-import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs";
+import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import {
   createBuilderContainer,
   executeCommand,
@@ -156,7 +156,7 @@ const deploy = async (userId: string, deploymentId: number) => {
   });
 
   deploymentStream.on("data", async (chunk: Buffer) => {
-    const log = chunk.toString("utf8").replace(/\0/g, "");
+    const log = `${chunk.toString("utf8").replace(/\0/g, "")}\n`;
 
     console.log(log);
 

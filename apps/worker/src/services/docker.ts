@@ -1,4 +1,4 @@
-import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs";
+import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import Docker from "dockerode";
 import env from "../env/vars.js";
 import os from "os";
