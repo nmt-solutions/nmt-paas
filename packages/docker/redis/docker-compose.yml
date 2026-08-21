@@ -4,19 +4,25 @@ services:
     container_name: redis
     restart: unless-stopped
 
-    command: >
-      redis-server
-      --appendonly yes
-      --requirepass WyXNQPXTpQkPDUDqna7LomMgfn53Rsec
-
-    ports:
-      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD}
 
     volumes:
       - redis-data:/data
 
     networks:
       - app-network
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
 networks:
   app-network:

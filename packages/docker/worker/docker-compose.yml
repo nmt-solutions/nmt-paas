@@ -1,0 +1,37 @@
+services:
+  worker:
+    build:
+      context: ../../..
+      dockerfile: apps/worker/docker/worker.Dockerfile
+
+    restart: unless-stopped
+
+    environment:
+      APP_ENV: ${APP_ENV}
+      DB_ENV: ${DB_ENV}
+      APP_PORT: ${APP_PORT}
+
+      DEV_DATABASE_URL: ${DEV_DATABASE_URL}
+      PROD_DATABASE_URL: ${PROD_DATABASE_URL}
+
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_APP_SLUG: ${GITHUB_APP_SLUG}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY}
+      GITHUB_PAT: ${GITHUB_PAT}
+      GITHUB_USER_NAME: ${GITHUB_USER_NAME}
+
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+      ENV_ENCRYPTION_KEY: ${ENV_ENCRYPTION_KEY}
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    external: true

@@ -1,6 +1,7 @@
 {
   "name": "nmt-paas",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
@@ -10,7 +11,7 @@
     "db-gen": "turbo run db-gen",
     "db-mig": "turbo run db-mig",
     "db-studio": "turbo run db-studio",
-    "docker": "node ./scripts/docker.js"
+    "docker": "node ./scripts/docker-new.js"
   },
   "devDependencies": {
     "prettier": "^3.7.4",
@@ -24,5 +25,8 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "dependencies": {
+    "dotenv": "^17.4.2"
+  }
 }
