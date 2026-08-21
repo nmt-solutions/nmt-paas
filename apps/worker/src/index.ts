@@ -1,12 +1,16 @@
 import { redis } from "@repo/redis";
-import "./workers/deployment.worker";
+import "./workers/deployment.worker.js";
 
-redis
-  .ping()
-  .then((res) => {
-    console.log(res);
-    console.log("Deployment worker started");
-  })
-  .catch((err) => {
-    console.error(err);
-  });
+const bootstrap = async () => {
+  redis
+    .ping()
+    .then((res) => {
+      console.log(res);
+      console.log("Deployment worker started");
+    })
+    .catch((err) => {
+      console.error(err);
+    });
+};
+
+bootstrap();

@@ -6,6 +6,13 @@ import { UpdateInput } from "../utils/types";
 export const getDeployment = async (deploymentId: number) => {
   return database.query.Deployments.findFirst({
     where: { id: deploymentId },
+    with: {
+      app: {
+        with: {
+          frameworkConfig: true,
+        },
+      },
+    },
   });
 };
 

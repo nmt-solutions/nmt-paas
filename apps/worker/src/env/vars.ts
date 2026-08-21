@@ -30,6 +30,24 @@ const EnvVarsSchema = z.object({
     .nonempty({ error: "GITHUB_APP_PRIVATE_KEY is required." })
     .nonoptional({ error: "GITHUB_APP_PRIVATE_KEY is required." })
     .transform((val) => val.replace(/\\n/g, "\n")),
+  GITHUB_PAT: z
+    .string()
+    .nonempty({ error: "GITHUB_PAT is required." })
+    .nonoptional({
+      error: "GITHUB_PAT is required.",
+    }),
+  GITHUB_USER_NAME: z
+    .string()
+    .nonempty({ error: "GITHUB_USER_NAME is required." })
+    .nonoptional({
+      error: "GITHUB_USER_NAME is required.",
+    }),
+  ENV_ENCRYPTION_KEY: z
+    .string()
+    .nonempty({ error: "ENV_ENCRYPTION_KEY is required." })
+    .nonoptional({
+      error: "ENV_ENCRYPTION_KEY is required.",
+    }),
 });
 
 const {

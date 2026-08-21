@@ -45,9 +45,30 @@ export const getUserOctokitToken = async (userId: string) => {
     throw new Error("Invalid installationId");
   }
 
+  const { data: installation, error: installationError } = await tryCatch(
+    octokit.request("GET /app/installations/{installation_id}", {
+      installation_id: installationId,
+    }),
+  );
+
+  if (installationError) {
+    throw new Error("Installation not found.");
+  }
+
   const { token } = (await octokit.auth({
     type: "installation",
   })) as { token: string };
 
-  return token;
+  return {
+    token,
+    owner: (installation.data.account as { login: string }).login,
+  };
+};
+
+export const getCloneUrl = async (userId: string, repo: string) => {
+  const { token: octokitToken, owner } = await getUserOctokitToken(userId);
+
+  const cloneUrl = `https://x-access-token:${octokitToken}@github.com/${owner}/${repo}.git`;
+
+  return cloneUrl;
 };

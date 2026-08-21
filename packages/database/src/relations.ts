@@ -38,7 +38,7 @@ export const relations = defineRelations(
 
       deployments: r.many.Deployments(),
 
-      frameworkConfig: r.many.FrameworkConfig(), // or one() if appId is unique
+      frameworkConfig: r.one.FrameworkConfig(), // or one() if appId is unique
     },
 
     AppDomains: {
