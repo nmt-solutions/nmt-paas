@@ -8,6 +8,7 @@ services:
 
     environment:
       APP_ENV: ${APP_ENV}
+      BASE_DOMAIN: ${BASE_DOMAIN}
       DB_ENV: ${DB_ENV}
       DEV_DATABASE_URL: ${DEV_DATABASE_URL}
       PROD_DATABASE_URL: ${PROD_DATABASE_URL}
