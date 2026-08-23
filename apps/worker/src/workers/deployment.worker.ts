@@ -1,7 +1,10 @@
 import { Worker } from "bullmq";
 
 import { redis } from "@repo/redis";
-import { getDeployment } from "@repo/database/access-layer/deployment.dal";
+import {
+  getDeployment,
+  updateDeployment,
+} from "@repo/database/access-layer/deployment.dal";
 import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import {
   createBuilderContainer,
@@ -20,11 +23,35 @@ const deploy = async (userId: string, deploymentId: number) => {
     throw new Error("Deployment not found");
   }
 
-  const installCommand = deployment.app?.frameworkConfig?.installCommand ?? "";
-  const buildCommand = deployment.app?.frameworkConfig?.buildCommand ?? "";
-  const startCommand = deployment.app?.frameworkConfig?.startCommand ?? "";
+  const appDomain = deployment.app?.appDomains.find(
+    (domain) => domain.env === deployment.env,
+  )?.domain;
+
+  if (!appDomain) {
+    throw new Error("App Domain Not Found");
+  }
+
+  const frameworkConfig = deployment.app?.frameworkConfig;
+
+  if (!frameworkConfig) {
+    throw new Error("Framework configuration not found");
+  }
+
+  const appPort = frameworkConfig.port;
+
+  const installCommand = frameworkConfig.installCommand;
+  const buildCommand = frameworkConfig.buildCommand;
+  const startCommand = frameworkConfig.startCommand;
 
   const container = await createBuilderContainer(deploymentId);
+
+  await updateDeployment(
+    {
+      id: deploymentId,
+      status: "cloning",
+    },
+    userId,
+  );
 
   await createDeploymentLogs({
     deploymentId,
@@ -42,13 +69,39 @@ const deploy = async (userId: string, deploymentId: number) => {
     createdBy: userId,
   });
 
+  await executeCommand(container, [
+    "sh",
+    "-c",
+    `git checkout ${deployment.branch}`,
+  ]);
+
+  await createDeploymentLogs({
+    deploymentId,
+    message: `Git branch switched to ${deployment.branch}`,
+    createdBy: userId,
+  });
+
+  await updateDeployment(
+    {
+      id: deploymentId,
+      status: "installing",
+    },
+    userId,
+  );
+
   await createDeploymentLogs({
     deploymentId,
     message: `Installing project dependencies...`,
     createdBy: userId,
   });
 
-  await executeCommand(container, ["sh", "-c", installCommand]);
+  const rootDirectory =
+    frameworkConfig.rootDirectory === "./" ||
+    frameworkConfig.rootDirectory === "/"
+      ? "/app"
+      : `/app/${frameworkConfig.rootDirectory.replace(/^\.?\//, "")}`;
+
+  await executeCommand(container, ["sh", "-c", installCommand, rootDirectory]);
 
   await createDeploymentLogs({
     deploymentId,
@@ -56,16 +109,31 @@ const deploy = async (userId: string, deploymentId: number) => {
     createdBy: userId,
   });
 
-  const envVars = fetchEnvVars(deployment.app?.projectId ?? 0, "production");
+  await updateDeployment(
+    {
+      id: deploymentId,
+      status: "building",
+    },
+    userId,
+  );
 
-  await executeCommand(container, [
-    "sh",
-    "-c",
-    `cat > .env << 'EOF'
-     ${envVars}
-     EOF
-    `,
-  ]);
+  const envVars = await fetchEnvVars(
+    deployment.app?.projectId ?? 0,
+    deployment.env,
+  );
+
+  await executeCommand(
+    container,
+    [
+      "sh",
+      "-c",
+      `cat > .env << 'EOF'
+       ${envVars}
+       EOF
+      `,
+    ],
+    rootDirectory,
+  );
 
   await createDeploymentLogs({
     deploymentId,
@@ -73,7 +141,7 @@ const deploy = async (userId: string, deploymentId: number) => {
     createdBy: userId,
   });
 
-  await executeCommand(container, ["sh", "-c", buildCommand]);
+  await executeCommand(container, ["sh", "-c", buildCommand], rootDirectory);
 
   await createDeploymentLogs({
     deploymentId,
@@ -108,39 +176,42 @@ const deploy = async (userId: string, deploymentId: number) => {
     },
   });
 
+  await updateDeployment(
+    {
+      id: deploymentId,
+      status: "starting",
+    },
+    userId,
+  );
+
   await createDeploymentLogs({
     deploymentId,
     message: `Deploying application...`,
     createdBy: userId,
   });
 
-  // Labels: {
-  //   "traefik.enable": "true",
-
-  //   "traefik.http.routers.app.rule": "Host(`myapp.novaai.app`)",
-
-  //   "traefik.http.routers.app.entrypoints": "websecure",
-
-  //   "traefik.http.routers.app.tls.certresolver": "letsencrypt",
-
-  //   "traefik.http.services.app.loadbalancer.server.port": "3000",
-  // },
-
   const deploymentContainer = await docker.createContainer({
     name: `deployment-${deploymentId}`,
+
     Image: `ghcr.io/${env.variables.GITHUB_USER_NAME}/${deploymentId}:${deploymentId}`,
+
     Labels: {
       "traefik.enable": "true",
 
-      "traefik.http.routers.myapp.rule": "Host(`myapp.localhost`)",
+      [`traefik.http.routers.deployment-${deploymentId}.rule`]: `Host(\`${appDomain}\`)`,
 
-      "traefik.http.routers.myapp.entrypoints": "web",
+      [`traefik.http.routers.deployment-${deploymentId}.entrypoints`]: "web",
 
-      "traefik.http.services.myapp.loadbalancer.server.port": "4173",
+      [`traefik.http.services.deployment-${deploymentId}.loadbalancer.server.port`]:
+        String(appPort),
+
+      "traefik.docker.network": "app-network",
     },
+
     ExposedPorts: {
-      "4173/tcp": {},
+      [`${appPort}/tcp`]: {},
     },
+
     HostConfig: {
       NetworkMode: "app-network",
     },
@@ -167,9 +238,17 @@ const deploy = async (userId: string, deploymentId: number) => {
     });
   });
 
+  await updateDeployment(
+    {
+      id: deploymentId,
+      status: "success",
+    },
+    userId,
+  );
+
   await createDeploymentLogs({
     deploymentId,
-    message: `${deployment.app?.appName} deployed successfully at ${"myapp.localhost:3000"}.`,
+    message: `${deployment.app?.appName} deployed successfully at ${appDomain}.`,
     createdBy: userId,
   });
 };
@@ -185,6 +264,13 @@ new Worker(
 
     if (error) {
       console.log(error);
+      await updateDeployment(
+        {
+          id: deploymentId,
+          status: "failed",
+        },
+        userId,
+      );
       await createDeploymentLogs({
         deploymentId,
         message: error.message,

@@ -5,6 +5,9 @@ import "dotenv/config";
 const EnvVarsSchema = z.object({
   APP_ENV: z.enum(["development", "production"]).default("development"),
   DB_ENV: z.enum(["development", "production"]).default("development"),
+  API_APP_PORT: z
+    .string({ error: "API_APP_PORT is required." })
+    .transform((val) => Number.parseInt(val, 10)),
   DEV_DATABASE_URL: z
     .string()
     .nonempty({ error: "DEV_DATABASE_URL is required." })
@@ -13,10 +16,23 @@ const EnvVarsSchema = z.object({
     .string()
     .nonempty({ error: "PROD_DATABASE_URL is required." })
     .nonoptional({ error: "PROD_DATABASE_URL is required." }),
-  BASE_DOMAIN: z
+  API_KEY: z
     .string()
-    .nonempty({ error: "BASE_DOMAIN is required." })
-    .nonoptional({ error: "BASE_DOMAIN is required." }),
+    .nonempty({ error: "API_KEY is required." })
+    .nonoptional({ error: "API_KEY is required." }),
+  REDIS_HOST: z
+    .string()
+    .nonempty({ error: "REDIS_HOST is required." })
+    .nonoptional({ error: "REDIS_HOST is required." }),
+  REDIS_PORT: z
+    .string()
+    .nonempty({ error: "REDIS_PORT is required." })
+    .nonoptional({ error: "REDIS_PORT is required." })
+    .transform((val) => Number.parseInt(val, 10)),
+  REDIS_PASSWORD: z
+    .string()
+    .nonempty({ error: "REDIS_PASSWORD is required." })
+    .nonoptional({ error: "REDIS_PASSWORD is required." }),
 });
 
 const {

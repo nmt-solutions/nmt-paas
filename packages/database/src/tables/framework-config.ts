@@ -1,4 +1,4 @@
-import { pgTable, serial, text, bigint } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, bigint, integer } from "drizzle-orm/pg-core";
 import { ResourceStatus, timestampDefault } from "../common";
 
 export const FrameworkConfig = pgTable("FrameworkConfig", {
@@ -10,6 +10,7 @@ export const FrameworkConfig = pgTable("FrameworkConfig", {
   buildCommand: text("buildCommand").notNull(),
   startCommand: text("startCommand").notNull(),
   outputDirectory: text("outputDirectory").notNull(),
+  port: integer("port").notNull(),
   resourceStatus: ResourceStatus(),
   createdAt: timestampDefault("createdAt"),
   createdBy: text("createdBy").notNull(),

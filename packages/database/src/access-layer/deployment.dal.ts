@@ -10,6 +10,7 @@ export const getDeployment = async (deploymentId: number) => {
       app: {
         with: {
           frameworkConfig: true,
+          appDomains: true,
         },
       },
     },

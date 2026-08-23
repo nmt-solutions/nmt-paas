@@ -1,3 +1,4 @@
+import { createAppDomains } from "./../../../../node_modules/@repo/database/src/access-layer/app-domains.dal";
 import { saveEnvVars } from "./env-vars";
 import { createProject } from "@repo/database/access-layer/project.dal";
 import { createDeployment } from "@repo/database/access-layer/deployment.dal";
@@ -83,6 +84,7 @@ export const initializeNewProjectAndDeploy = async ({
     buildCommand: string;
     startCommand: string;
     outputDirectory: string;
+    port: number;
   };
 }) => {
   const { octokit } = await getUserGithubOctokit(userId);
@@ -118,7 +120,11 @@ export const initializeNewProjectAndDeploy = async ({
       repoId,
       projectId: project.id,
       createdBy: userId,
-      appName: repository.html_url.split("/").at(-1)?.toLowerCase() as string,
+      appName: repository.html_url
+        .split("/")
+        .at(-1)
+        ?.toLowerCase()
+        ?.replace(" ", "-") as string,
       gitProvider: "github",
     }),
   );
@@ -131,6 +137,17 @@ export const initializeNewProjectAndDeploy = async ({
     });
   }
 
+  const { error: appDomainError } = await tryCatch(
+    createAppDomains(app.id, app.appName, userId),
+  );
+
+  if (appDomainError) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Unable to generate a domain",
+    });
+  }
+
   const fc = await createFrameworkConfig({
     appId: app.id,
     framework: frameworkConfig.framework,
@@ -139,6 +156,7 @@ export const initializeNewProjectAndDeploy = async ({
     buildCommand: frameworkConfig.buildCommand,
     startCommand: frameworkConfig.startCommand,
     outputDirectory: frameworkConfig.outputDirectory,
+    port: frameworkConfig.port,
     createdBy: userId,
   });
 

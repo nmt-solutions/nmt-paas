@@ -59,11 +59,13 @@ export async function createBuilderContainer(
 export async function executeCommand(
   container: Docker.Container,
   command: string[],
+  workingDir?: string,
 ) {
   const exec = await container.exec({
     Cmd: command,
     AttachStdout: true,
     AttachStderr: true,
+    WorkingDir: workingDir,
   });
 
   const stream = await exec.start({

@@ -24,7 +24,7 @@ export const AppDomains = pgTable("AppDomains", {
   appId: bigint({ mode: "number" })
     .notNull()
     .references(() => Apps.id),
-  domain: text("domain").notNull(),
+  domain: text("domain").notNull().unique("unique_app_domain"),
   env: AppEnv("env").notNull(),
   userId: text("userId").notNull(),
   resourceStatus: ResourceStatus(),

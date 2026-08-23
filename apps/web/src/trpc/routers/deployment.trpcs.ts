@@ -44,6 +44,10 @@ export const deploymentRouter = createTRPCRouter({
             outputDirectory: z
               .string({ error: "Output directory is required" })
               .nonempty({ error: "Output directory is required" }),
+            port: z
+              .number({ error: "Port is required" })
+              .nonnegative({ error: "Port must be a +ve int." })
+              .nonoptional({ error: "Port is required" }),
           })
           .optional(),
         envVars: z
