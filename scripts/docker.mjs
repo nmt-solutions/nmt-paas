@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import dotenv from "dotenv";
+import { copyEnvFiles } from "./copy-env.mjs";
 
 const BASE_DIR = path.join(process.cwd(), "packages", "docker");
 const NETWORK_NAME = "app-network";
@@ -250,6 +251,8 @@ function checkRequiredEnv(names) {
 
 function setup() {
   console.log("\nStarting NMT PaaS setup...\n");
+
+  copyEnvFiles();
 
   checkRequiredEnv([
     "API_APP_PORT",
