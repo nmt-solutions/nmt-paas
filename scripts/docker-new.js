@@ -246,10 +246,6 @@ function checkRequiredEnv(names) {
 function setup() {
   console.log("\nStarting NMT PaaS setup...\n");
 
-  checkDocker();
-
-  ensureNetwork(NETWORK_NAME);
-
   checkRequiredEnv([
     "API_APP_PORT",
     "API_KEY",
@@ -259,7 +255,12 @@ function setup() {
     "REDIS_PASSWORD",
     "DEV_DATABASE_URL",
     "PROD_DATABASE_URL",
+    "CLOUDFLARE_TUNNEL_TOKEN",
   ]);
+
+  checkDocker();
+
+  ensureNetwork(NETWORK_NAME);
 
   console.log("\nStarting Traefik...");
 
@@ -271,7 +272,6 @@ function setup() {
 
   compose("redis", ["up", "-d"]);
 
-  // waitForRedis();
   waitForComposeService("redis", "redis");
 
   console.log("\nStarting worker...");
@@ -285,6 +285,12 @@ function setup() {
   compose("api", ["up", "-d", "--build"]);
 
   waitForComposeService("api", "api");
+
+  console.log("\nStarting Cloudflare Tunnel...");
+
+  compose("cloudflare", ["up", "-d"]);
+
+  waitForComposeService("cloudflare", "cloudflared");
 
   console.log("\nNMT PaaS setup completed.");
 }

@@ -26,7 +26,11 @@ const queueDeployment: APIHandler<
     return;
   }
 
-  await deploymentQueue.add("deployment-queue", data);
+  console.log("Incoming:", data);
+
+  const job = await deploymentQueue.add("deployment-queue", data);
+
+  console.log("Queued:", JSON.stringify(job.data));
 
   res.status(201).send({
     status: "success",

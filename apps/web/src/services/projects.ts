@@ -63,6 +63,8 @@ export const deployProject = async (params: {
     params.userId,
   );
 
+  console.log("response", response);
+
   if (response.status === "error") {
     throw new Error(response.message);
   }
