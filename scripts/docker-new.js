@@ -47,6 +47,11 @@ function getComposeFile(project) {
 function compose(project, args = [], env = {}) {
   const { projectDir, composeFile } = getComposeFile(project);
 
+  console.log("Worker Env Vars:", {
+    ...process.env,
+    ...env,
+  });
+
   return docker(["compose", "-f", composeFile, ...args], {
     cwd: projectDir,
     env: {
