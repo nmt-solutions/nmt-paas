@@ -1,8 +1,14 @@
 import { Router } from "express";
 import healthRouter from "./health.router.js";
+import { requireApiAuth } from "../../controllers/v1/authentication/auth.js";
+import deploymentsRouter from "./deployments.router.js";
 
 const v1Router = Router();
 
-v1Router.use(healthRouter);
+v1Router.use("/health", healthRouter);
+
+v1Router.use(requireApiAuth);
+
+v1Router.use("/deployments", deploymentsRouter);
 
 export default v1Router;

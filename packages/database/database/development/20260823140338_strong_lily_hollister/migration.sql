@@ -29,7 +29,7 @@ CREATE TABLE "Projects" (
 CREATE TABLE "AppDomains" (
 	"id" serial PRIMARY KEY,
 	"appId" bigint NOT NULL,
-	"domain" text NOT NULL,
+	"domain" text NOT NULL CONSTRAINT "unique_app_domain" UNIQUE,
 	"env" "AppEnv" NOT NULL,
 	"userId" text NOT NULL,
 	"resourceStatus" "resourceStatus" DEFAULT 'active'::"resourceStatus" NOT NULL,
@@ -44,7 +44,7 @@ CREATE TABLE "Apps" (
 	"appName" text NOT NULL,
 	"projectId" bigint NOT NULL,
 	"gitProvider" "GitProvider" NOT NULL,
-	"repoId" bigint NOT NULL UNIQUE,
+	"repoId" bigint NOT NULL,
 	"resourceStatus" "resourceStatus" DEFAULT 'active'::"resourceStatus" NOT NULL,
 	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
 	"createdBy" text NOT NULL,
@@ -85,6 +85,23 @@ CREATE TABLE "EnvVars" (
 	"key" text NOT NULL,
 	"encryptedValue" text NOT NULL,
 	"env" "AppEnv" NOT NULL,
+	"resourceStatus" "resourceStatus" DEFAULT 'active'::"resourceStatus" NOT NULL,
+	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+	"createdBy" text NOT NULL,
+	"modifiedAt" timestamp with time zone DEFAULT now(),
+	"modifiedBy" text
+);
+--> statement-breakpoint
+CREATE TABLE "FrameworkConfig" (
+	"id" serial PRIMARY KEY,
+	"appId" bigint,
+	"framework" text NOT NULL,
+	"rootDirectory" text NOT NULL,
+	"installCommand" text NOT NULL,
+	"buildCommand" text NOT NULL,
+	"startCommand" text NOT NULL,
+	"outputDirectory" text NOT NULL,
+	"port" integer NOT NULL,
 	"resourceStatus" "resourceStatus" DEFAULT 'active'::"resourceStatus" NOT NULL,
 	"createdAt" timestamp with time zone DEFAULT now() NOT NULL,
 	"createdBy" text NOT NULL,

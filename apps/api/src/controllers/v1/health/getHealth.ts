@@ -6,6 +6,7 @@ const getHealth: APIHandler = async (req, res) => {
     statusCode: 200,
     message: "System is healthy.",
     data: "OK",
+    errors: null,
   });
 };
 

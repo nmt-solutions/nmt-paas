@@ -3,20 +3,14 @@ import z from "zod";
 import "dotenv/config";
 
 const EnvVarsSchema = z.object({
-  GITHUB_APP_ID: z
+  API_KEY: z
     .string()
-    .nonempty({})
-    .nonoptional({})
-    .transform((val) => Number.parseInt(val, 10)),
-  GITHUB_APP_SLUG: z
+    .nonempty({ error: "API_KEY is required." })
+    .nonoptional({ error: "API_KEY is required." }),
+  API_BASE_URL: z
     .string()
-    .nonempty({ error: "GITHUB_APP_SLUG is required." })
-    .nonoptional({ error: "GITHUB_APP_SLUG is required." }),
-  GITHUB_APP_PRIVATE_KEY: z
-    .string()
-    .nonempty({ error: "GITHUB_APP_PRIVATE_KEY is required." })
-    .nonoptional({ error: "GITHUB_APP_PRIVATE_KEY is required." })
-    .transform((val) => val.replace(/\\n/g, "\n")),
+    .nonempty({ error: "API_BASE_URL is required." })
+    .nonoptional({ error: "API_BASE_URL is required." }),
 });
 
 const {

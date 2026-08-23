@@ -16,7 +16,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@repo/database": "*",
-    "@repo/queues": "*",
+    "@repo/api-sdk": "*",
     "@tanstack/react-query": "^5.100.10",
     "@tanstack/react-table": "^8.21.3",
     "@trpc/client": "^11.17.0",

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { createBatches } from "@/utils/batch";
 
 type UsePaginateOptions = {
@@ -69,38 +69,44 @@ const usePaginate = <T>(data: T[], opts?: UsePaginateOptions) => {
   const disableNext = page >= totalPages;
   const disablePrev = page <= 1;
 
-  const updateState = (
-    updater:
-      | { page?: number; pageSize?: number }
-      | ((prev: { page: number; pageSize: number }) => {
-          page?: number;
-          pageSize?: number;
-        }),
-  ) => {
-    if (!shouldCache) return;
+  const updateState = useCallback(
+    (
+      updater:
+        | { page?: number; pageSize?: number }
+        | ((prev: { page: number; pageSize: number }) => {
+            page?: number;
+            pageSize?: number;
+          }),
+    ) => {
+      if (!shouldCache) return;
 
-    queryClient.setQueryData(
-      ["pagination-state", id],
-      (prev?: { page: number; pageSize: number }) => {
-        const current = prev ?? {
-          page: initialPage,
-          pageSize: initialPageSize,
-        };
+      queryClient.setQueryData(
+        ["pagination-state", id],
+        (prev?: { page: number; pageSize: number }) => {
+          const current = prev ?? {
+            page: initialPage,
+            pageSize: initialPageSize,
+          };
 
-        const updates =
-          typeof updater === "function" ? updater(current) : updater;
+          const updates =
+            typeof updater === "function" ? updater(current) : updater;
 
-        return {
-          ...current,
-          ...updates,
-        };
-      },
-    );
-  };
+          return {
+            ...current,
+            ...updates,
+          };
+        },
+      );
+    },
+    [id, initialPage, initialPageSize, queryClient, shouldCache],
+  );
 
-  const setPage = (page: number) => {
-    updateState({ page });
-  };
+  const setPage = useCallback(
+    (page: number) => {
+      updateState({ page });
+    },
+    [updateState],
+  );
 
   const setPageSize = (pageSize: number) => {
     updateState({
@@ -125,10 +131,9 @@ const usePaginate = <T>(data: T[], opts?: UsePaginateOptions) => {
     }));
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Not needed
   useEffect(() => {
     setPage(1);
-  }, [data]);
+  }, [data, setPage]);
 
   return {
     pageData,

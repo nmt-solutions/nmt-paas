@@ -1,8 +1,20 @@
 {
-  "name": "@repo/github",
+  "name": "@repo/api-sdk",
   "version": "1.0.0",
   "license": "ISC",
   "main": "./dist/index.js",
+  "exports": {
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
+    },
+    "./models/*": {
+      "types": "./dist/models/*.d.ts",
+      "import": "./dist/models/*.js",
+      "default": "./dist/models/*.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint --max-warnings 0",
@@ -17,8 +29,8 @@
     "typescript": "5.9.2"
   },
   "dependencies": {
+    "axios": "^1.19.0",
     "dotenv": "^17.4.2",
-    "octokit": "^5.0.5",
     "zod": "^4.4.3"
   }
 }

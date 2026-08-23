@@ -4,10 +4,11 @@ import "dotenv/config";
 
 const EnvVarsSchema = z.object({
   APP_ENV: z.enum(["development", "production"]).default("development"),
+  BASE_DOMAIN: z
+    .string()
+    .nonempty({ error: "BASE_DOMAIN is required." })
+    .nonoptional({ error: "BASE_DOMAIN is required." }),
   DB_ENV: z.enum(["development", "production"]).default("development"),
-  APP_PORT: z
-    .string({ error: "APP_PORT is required." })
-    .transform((val) => Number.parseInt(val, 10)),
   DEV_DATABASE_URL: z
     .string()
     .nonempty({ error: "DEV_DATABASE_URL is required." })

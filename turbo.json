@@ -8,21 +8,26 @@
       "outputs": [".next/**", "!.next/cache/**", "dist/**"],
       "env": [
         "APP_ENV",
-        "APP_PORT",
-        "DB_ENV",
         "WORKOS_CLIENT_ID",
         "WORKOS_API_KEY",
         "WORKOS_COOKIE_PASSWORD",
         "NEXT_PUBLIC_WORKOS_REDIRECT_URI",
+        "DB_ENV",
         "DEV_DATABASE_URL",
         "PROD_DATABASE_URL",
         "GITHUB_APP_ID",
         "GITHUB_APP_SLUG",
         "GITHUB_APP_PRIVATE_KEY",
-        "ENV_ENCRYPTION_KEY",
+        "GITHUB_PAT",
+        "GITHUB_USER_NAME",
         "REDIS_HOST",
         "REDIS_PORT",
-        "REDIS_PASSWORD"
+        "REDIS_PASSWORD",
+        "ENV_ENCRYPTION_KEY",
+        "BASE_DOMAIN",
+        "API_APP_PORT",
+        "API_KEY",
+        "API_BASE_URL"
       ]
     },
     "lint": {

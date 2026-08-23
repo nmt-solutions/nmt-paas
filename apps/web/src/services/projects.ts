@@ -1,14 +1,14 @@
-import { createAppDomains } from "./../../../../node_modules/@repo/database/src/access-layer/app-domains.dal";
-import { saveEnvVars } from "./env-vars";
-import { createProject } from "@repo/database/access-layer/project.dal";
-import { createDeployment } from "@repo/database/access-layer/deployment.dal";
-import { getUserGithubOctokit } from "./github";
 import { tryCatch } from "@/utils/try-catch";
-import { TRPCError } from "@trpc/server";
-import { deploymentQueue } from "@repo/queues";
-import { Octokit } from "octokit";
+import { createAppDomains } from "@repo/database/access-layer/app-domains.dal";
 import { createApp } from "@repo/database/access-layer/apps.dal";
+import { createDeployment } from "@repo/database/access-layer/deployment.dal";
 import { createFrameworkConfig } from "@repo/database/access-layer/framework-config.dal";
+import { createProject } from "@repo/database/access-layer/project.dal";
+import { TRPCError } from "@trpc/server";
+import { Octokit } from "octokit";
+import { saveEnvVars } from "./env-vars";
+import { getUserGithubOctokit } from "./github";
+import cpApiClient from "./cp-api-client";
 
 export const deployProject = async (params: {
   octokit?: Octokit;
@@ -58,10 +58,14 @@ export const deployProject = async (params: {
     });
   }
 
-  await deploymentQueue.add("deployment-queue", {
-    userId: params.userId,
-    deploymentId: deployment.id,
-  });
+  const response = await cpApiClient.queueDeployment(
+    deployment.id,
+    params.userId,
+  );
+
+  if (response.status === "error") {
+    throw new Error(response.message);
+  }
 };
 
 export const initializeNewProjectAndDeploy = async ({

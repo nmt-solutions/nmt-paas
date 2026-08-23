@@ -141,6 +141,37 @@ function waitForRedis(maxAttempts = 30) {
   throw new Error("Redis did not become healthy within 30 seconds.");
 }
 
+function checkApiEnv() {
+  const envFile = path.join(BASE_DIR, "api", ".env");
+
+  if (!fs.existsSync(envFile)) {
+    throw new Error(`API environment file not found: ${envFile}`);
+  }
+
+  const content = fs.readFileSync(envFile, "utf8");
+
+  const required = [
+    "API_APP_PORT",
+    "API_KEY",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_PASSWORD",
+  ];
+
+  const missing = required.filter((name) => {
+    const match = content.match(new RegExp(`^${name}=(.*)$`, "m"));
+    return !match || !match[1].trim();
+  });
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required API environment variables:\n${missing.join("\n")}`,
+    );
+  }
+
+  console.log("API environment: OK");
+}
+
 function getContainerId(name) {
   const result = spawnSync(
     "docker",
@@ -220,6 +251,9 @@ function setup() {
   ensureNetwork(NETWORK_NAME);
 
   checkRequiredEnv([
+    "API_APP_PORT",
+    "API_KEY",
+    "BASE_DOMAIN",
     "REDIS_HOST",
     "REDIS_PORT",
     "REDIS_PASSWORD",
@@ -227,23 +261,30 @@ function setup() {
     "PROD_DATABASE_URL",
   ]);
 
-  console.log("\nStarting Redis...");
-
-  compose("redis", ["up", "-d"]);
-
-  waitForRedis();
-
   console.log("\nStarting Traefik...");
 
   compose("traefik", ["up", "-d"]);
 
   waitForComposeService("traefik", "traefik");
 
+  console.log("\nStarting Redis...");
+
+  compose("redis", ["up", "-d"]);
+
+  // waitForRedis();
+  waitForComposeService("redis", "redis");
+
   console.log("\nStarting worker...");
 
   compose("worker", ["up", "-d", "--build"]);
 
   waitForComposeService("worker", "worker");
+
+  console.log("\nStarting API...");
+
+  compose("api", ["up", "-d", "--build"]);
+
+  waitForComposeService("api", "api");
 
   console.log("\nNMT PaaS setup completed.");
 }

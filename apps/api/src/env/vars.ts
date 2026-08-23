@@ -3,19 +3,9 @@ import z from "zod";
 import "dotenv/config";
 
 const EnvVarsSchema = z.object({
-  APP_ENV: z.enum(["development", "production"]).default("development"),
-  DB_ENV: z.enum(["development", "production"]).default("development"),
   API_APP_PORT: z
     .string({ error: "API_APP_PORT is required." })
     .transform((val) => Number.parseInt(val, 10)),
-  DEV_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "DEV_DATABASE_URL is required." })
-    .nonoptional({ error: "DEV_DATABASE_URL is required." }),
-  PROD_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "PROD_DATABASE_URL is required." })
-    .nonoptional({ error: "PROD_DATABASE_URL is required." }),
   API_KEY: z
     .string()
     .nonempty({ error: "API_KEY is required." })

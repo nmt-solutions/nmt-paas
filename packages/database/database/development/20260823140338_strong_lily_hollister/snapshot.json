@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "5c6b5a3e-3607-4888-b164-e4be38249fac",
+  "id": "d8809b51-972d-4d63-8f5e-9b7955158bfa",
   "prevIds": [
     "00000000-0000-0000-0000-000000000000"
   ],
@@ -95,6 +95,12 @@
     {
       "isRlsEnabled": false,
       "name": "EnvVars",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "FrameworkConfig",
       "entityType": "tables",
       "schema": "public"
     },
@@ -983,6 +989,188 @@
       "table": "EnvVars"
     },
     {
+      "type": "serial",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "appId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "framework",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rootDirectory",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "installCommand",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "buildCommand",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "startCommand",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "outputDirectory",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "port",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "resourceStatus",
+      "typeSchema": "public",
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'active'",
+      "generated": null,
+      "identity": null,
+      "name": "resourceStatus",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "createdAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "createdBy",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "modifiedAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "modifiedBy",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "FrameworkConfig"
+    },
+    {
       "nameExplicit": false,
       "columns": [
         "appId"
@@ -1138,14 +1326,24 @@
       "entityType": "pks"
     },
     {
-      "nameExplicit": false,
       "columns": [
-        "repoId"
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "FrameworkConfig_pkey",
+      "schema": "public",
+      "table": "FrameworkConfig",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "domain"
       ],
       "nullsNotDistinct": false,
-      "name": "Apps_repoId_key",
+      "name": "unique_app_domain",
       "schema": "public",
-      "table": "Apps",
+      "table": "AppDomains",
       "entityType": "uniques"
     }
   ],

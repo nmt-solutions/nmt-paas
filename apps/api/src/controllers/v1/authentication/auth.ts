@@ -10,6 +10,7 @@ export const requireApiAuth: APIHandler = (req, res, next) => {
       statusCode: 401,
       message: "Unauthorized",
       data: null,
+      errors: "Unauthorized",
     });
 
     return;
@@ -23,6 +24,7 @@ export const requireApiAuth: APIHandler = (req, res, next) => {
       statusCode: 401,
       message: "Unauthorized",
       data: null,
+      errors: "Unauthorized",
     });
 
     return;

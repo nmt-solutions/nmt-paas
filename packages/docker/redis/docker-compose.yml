@@ -24,6 +24,9 @@ services:
       retries: 10
       start_period: 5s
 
+    ports:
+      - "6379:6379"
+
 networks:
   app-network:
     external: true
