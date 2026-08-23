@@ -1,1 +1,1 @@
-{"root":["./src/index.ts","./src/env/vars.ts","./src/services/docker.ts","./src/services/env-vars.ts","./src/services/github.ts","./src/utils/repo-dir.ts","./src/utils/try-catch.ts","./src/workers/deployment.worker.ts"],"version":"5.9.2"}
+{"root":["./src/index.ts","./src/env/vars.ts","./src/services/docker.ts","./src/services/env-vars.ts","./src/services/github.ts","./src/utils/repo-dir.ts","./src/utils/try-catch.ts","./src/workers/deployment.worker.old.ts","./src/workers/deployment.worker.ts"],"version":"5.9.2"}
