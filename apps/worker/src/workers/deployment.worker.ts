@@ -195,6 +195,8 @@ const deploy = async (userId: string, deploymentId: number) => {
       },
     });
 
+    let lastPercent = -1;
+
     await new Promise<void>((resolve, reject) => {
       pushStream.on("end", resolve);
       pushStream.on("error", reject);
@@ -206,7 +208,34 @@ const deploy = async (userId: string, deploymentId: number) => {
           return;
         }
 
-        console.log(`[GHCR] ${output}`);
+        // Docker can emit multiple JSON objects in one chunk.
+        for (const line of output.split("\n")) {
+          try {
+            const data = JSON.parse(line);
+
+            if (data.status === "Pushing" && data.progressDetail?.total) {
+              const { current, total } = data.progressDetail;
+
+              const percent = Math.floor((current / total) * 100);
+              const roundedPercent = Math.floor(percent / 10) * 10;
+
+              if (roundedPercent > lastPercent) {
+                lastPercent = roundedPercent;
+                console.log(`[GHCR] Pushing ${roundedPercent}%`);
+              }
+            } else if (data.status === "Pushed") {
+              if (lastPercent < 100) {
+                console.log("[GHCR] Pushing 100%");
+              }
+
+              console.log("[GHCR] Pushed");
+            } else if (data.status?.includes("digest:")) {
+              console.log(`[GHCR] ${data.status}`);
+            }
+          } catch {
+            // Ignore non-JSON output.
+          }
+        }
       });
     });
 
