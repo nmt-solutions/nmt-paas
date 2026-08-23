@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import axios, { isAxiosError } from "axios";
 import env from "./env/vars";
 import { APIResponse } from "./models/api-response";
