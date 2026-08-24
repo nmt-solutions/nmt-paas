@@ -44,7 +44,8 @@ export const updateProject = (
 
 export const deleteProject = (projectId: number, userId: string) => {
   return database
-    .delete(Projects)
+    .update(Projects)
+    .set({ resourceStatus: "inactive" })
     .where(and(eq(Projects.id, projectId), eq(Projects.createdBy, userId)))
     .returning();
 };
