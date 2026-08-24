@@ -4,7 +4,7 @@ import { Apps } from "../schema";
 
 export const getAppByRepoId = async (repoId: number, userId: string) => {
   return database.query.Apps.findFirst({
-    where: { repoId, createdBy: userId },
+    where: { repoId, createdBy: userId, resourceStatus: "active" },
     with: {
       project: true,
     },
