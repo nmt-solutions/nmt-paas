@@ -492,7 +492,7 @@ new Worker(
     }
   },
   {
-    connection: redis as any,
+    connection: redis as object,
     concurrency: 5,
   },
 );

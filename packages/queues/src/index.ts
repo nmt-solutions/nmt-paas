@@ -6,7 +6,7 @@ export const deploymentQueue = new Queue<{
   userId: string;
   deploymentId: number;
 }>("deployment-queue", {
-  connection: redis as any,
+  connection: redis as object,
 
   defaultJobOptions: {
     attempts: 3,

@@ -28,13 +28,16 @@ export async function createBuilderContainer(
   const docker = await getDocker();
 
   await new Promise((resolve, reject) => {
-    docker.pull("node:22-alpine", (err: any, stream: any) => {
-      if (err) return reject(err);
+    docker.pull(
+      "node:22-alpine",
+      (err: object, stream: NodeJS.ReadableStream) => {
+        if (err) return reject(err);
 
-      docker.modem.followProgress(stream, (err) =>
-        err ? reject(err) : resolve(undefined),
-      );
-    });
+        docker.modem.followProgress(stream, (err) =>
+          err ? reject(err) : resolve(undefined),
+        );
+      },
+    );
   });
 
   const container = await docker.createContainer({

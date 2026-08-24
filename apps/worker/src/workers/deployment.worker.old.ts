@@ -170,7 +170,7 @@ const deploy = async (userId: string, deploymentId: number) => {
     `ghcr.io/${githubUserName.toLowerCase()}/${deploymentId}:${deploymentId}`,
   );
 
-  const stream = await image.push({
+  await image.push({
     authconfig: {
       username: githubUserName,
       password: env.variables.GITHUB_PAT,
@@ -286,7 +286,7 @@ new Worker(
   },
 
   {
-    connection: redis as any,
+    connection: redis as object,
 
     concurrency: 5,
   },

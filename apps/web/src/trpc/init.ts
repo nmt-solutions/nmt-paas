@@ -7,6 +7,7 @@ import superjson from "superjson";
  * the RSC server caller (where you pass `next/headers`) and the
  * API route handler (where you pass the request headers).
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const createTRPCContext = async (_opts: { headers: Headers }) => {
   const userInfo = await withAuth();
   return { userInfo };

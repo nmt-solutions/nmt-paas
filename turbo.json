@@ -27,7 +27,8 @@
         "BASE_DOMAIN",
         "API_APP_PORT",
         "API_KEY",
-        "API_BASE_URL"
+        "API_BASE_URL",
+        "VERCEL_URL"
       ]
     },
     "lint": {

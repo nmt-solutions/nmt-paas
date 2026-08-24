@@ -3,7 +3,7 @@ import env from "../env/vars.js";
 import crypto from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
-const IV_LENGTH = 12; // Recommended for GCM
+// const IV_LENGTH = 12; // Recommended for GCM
 
 function getKey(): Buffer {
   const key = env.variables.ENV_ENCRYPTION_KEY;

@@ -109,7 +109,7 @@ const RepoItem = ({
   // };
 
   return (
-    <Card>
+    <Card className="mb-4">
       <CardHeader>
         <CardTitle>
           <div className="flex items-center justify-start gap-4">
