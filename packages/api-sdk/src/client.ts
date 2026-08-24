@@ -68,11 +68,13 @@ export class ControlPanelAPIClient {
     onLog: (log: string) => void,
     signal?: AbortSignal,
   ) {
-    const response = await fetch(`/api/v1/logs/stream/${deploymentId}`, {
-      signal,
-      credentials: "include",
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-    });
+    const response = await fetch(
+      `${this.baseUrl}/logs/stream/${deploymentId}`,
+      {
+        signal,
+        headers: this.getHeaders(),
+      },
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to stream deployment logs: ${response.status}`);

@@ -19,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import toast from "../toast/toast";
-import cpApiClient from "@/services/cp-api-client";
 
 export default function AppDetails({ appId }: { appId: number }) {
   const trpc = useTRPC();
@@ -309,14 +308,58 @@ function LogPanel({
 
     const controller = new AbortController();
 
-    cpApiClient
-      .streamRuntimeLogs(
-        latestSuccessDeployment.id,
-        (log) => {
-          setRuntimeLogs((current) => [...current, log]);
-        },
-        controller.signal,
-      )
+    fetch(`/api/apps/${appId}/runtime-logs`, {
+      signal: controller.signal,
+      credentials: "same-origin",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to stream runtime logs: ${response.status}`);
+        }
+
+        if (!response.body) {
+          throw new Error("Runtime log stream is not available.");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? "";
+
+          for (const event of events) {
+            const dataLine = event
+              .split("\n")
+              .find((line) => line.startsWith("data:"));
+            if (!dataLine) continue;
+
+            const data = dataLine.slice("data:".length).trim();
+            if (!data) continue;
+
+            try {
+              const parsed: unknown = JSON.parse(data);
+              const log =
+                typeof parsed === "string"
+                  ? parsed
+                  : typeof parsed === "object" &&
+                      parsed !== null &&
+                      "message" in parsed &&
+                      typeof parsed.message === "string"
+                    ? parsed.message
+                    : JSON.stringify(parsed);
+              setRuntimeLogs((current) => [...current, log]);
+            } catch {
+              setRuntimeLogs((current) => [...current, data]);
+            }
+          }
+        }
+      })
       .catch((error) => {
         if (error.name !== "AbortError") {
           console.error(error);
@@ -326,7 +369,7 @@ function LogPanel({
     return () => {
       controller.abort();
     };
-  }, [error, isPending, latestSuccessDeployment]);
+  }, [appId, error, isPending, latestSuccessDeployment]);
 
   const isDeploymentLogs = title === "Deployment logs";
 
