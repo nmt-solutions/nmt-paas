@@ -33,7 +33,11 @@ export const getUserApp = async (appId: number, userId: string) =>
 
 export const getAppLatestDeployment = async (appId: number, userId: string) => {
   return database.query.Deployments.findFirst({
-    where: { appId: appId, createdBy: userId, status: "success" },
+    where: {
+      appId: appId,
+      createdBy: userId,
+      status: "success",
+    },
     orderBy: { createdAt: "desc" },
   });
 };

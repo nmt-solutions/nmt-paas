@@ -5,7 +5,7 @@ import { generateReadableRandomText } from "../utils/readable-random-text";
 
 export const getAppDomains = async (appId: number) => {
   return await database.query.AppDomains.findMany({
-    where: { appId: appId },
+    where: { appId: appId, resourceStatus: "active" },
   });
 };
 

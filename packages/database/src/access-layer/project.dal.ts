@@ -5,7 +5,7 @@ import { UpdateInput } from "../utils/types";
 
 export const getProject = async (projectId: number) => {
   return database.query.Projects.findFirst({
-    where: { id: projectId },
+    where: { id: projectId, resourceStatus: "active" },
   });
 };
 

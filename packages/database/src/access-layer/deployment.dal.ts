@@ -5,7 +5,7 @@ import { UpdateInput } from "../utils/types";
 
 export const getDeployment = async (deploymentId: number) => {
   return database.query.Deployments.findFirst({
-    where: { id: deploymentId },
+    where: { id: deploymentId, resourceStatus: "active" },
     with: {
       app: {
         with: {
