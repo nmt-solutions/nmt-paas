@@ -1,6 +1,6 @@
 "use client";
 
-import { CommandIcon } from "lucide-react";
+import { Cloud } from "lucide-react";
 import Link from "next/link";
 import { NavMain } from "@/components/app-sidebar/nav-main";
 import { NavUser } from "@/components/app-sidebar/nav-user";
@@ -17,22 +17,26 @@ import {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
+      <SidebarHeader className="p-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
               className="data-[slot=sidebar-menu-button]:p-1.5!"
             >
-              <Link href="#">
-                <CommandIcon className="size-5!" />
-                <span className="text-base font-semibold">Acme Inc.</span>
+              <Link href="/dashboard">
+                <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+                  <Cloud className="size-4!" />
+                </span>
+                <span className="text-base font-semibold tracking-tight">
+                  NMT Deploy
+                </span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="px-2">
         <NavMain />
         {/* <NavDocuments /> */}
         {/* <NavSecondary className="mt-auto" /> */}

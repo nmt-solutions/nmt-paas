@@ -3,7 +3,7 @@
 import toast from "@/components/toast/toast";
 import { useTRPC } from "@/trpc/client";
 import { useMutation } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { GitBranch, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
@@ -48,18 +48,28 @@ const ConnectGithub = ({
   }, [installationId, state, mutate, router]);
 
   return (
-    <div>
-      {error ? (
-        <div>
-          Error: <span className="text-rose-600">{error}</span>
+    <main className="flex min-h-screen items-center justify-center p-6">
+      <div className="glass-panel w-full max-w-md p-8 text-center">
+        <div className="mx-auto grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary">
+          <GitBranch className="size-6" />
         </div>
-      ) : (
-        <div className="flex items-center justify-around gap-2">
-          <Loader2 className="animate-spin" />
-          <span>Connecting Github Account...</span>
-        </div>
-      )}
-    </div>
+        {error ? (
+          <div className="mt-5">
+            <h1 className="text-xl font-semibold">GitHub connection failed</h1>
+            <p className="mt-2 text-sm text-muted-foreground">{error}</p>
+          </div>
+        ) : (
+          <div className="mt-5">
+            <Loader2 className="mx-auto size-5 animate-spin text-primary" />
+            <h1 className="mt-4 text-xl font-semibold">Connecting GitHub</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              We’re verifying your installation and bringing you back to the
+              dashboard.
+            </p>
+          </div>
+        )}
+      </div>
+    </main>
   );
 };
 

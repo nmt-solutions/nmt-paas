@@ -5,9 +5,9 @@ const SignIn = async () => {
   return (
     <Link
       href={"/api/auth/login"}
-      className={buttonVariants({ variant: "default" })}
+      className={buttonVariants({ variant: "default", size: "sm" })}
     >
-      Sign In
+      Log in
     </Link>
   );
 };

@@ -32,7 +32,7 @@ export const updateDeployment = async (
   params: UpdateInput<InferSelectModel<typeof Deployments>, "id">,
   updatedBy: string,
 ) => {
-  database
+  return database
     .update(Deployments)
     .set({ ...params, modifiedBy: updatedBy, id: undefined })
     .where(eq(Deployments.id, params.id));

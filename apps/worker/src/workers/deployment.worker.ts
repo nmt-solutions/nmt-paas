@@ -15,6 +15,67 @@ import { getCloneUrl } from "../services/github.js";
 import env from "../env/vars.js";
 import { fetchEnvVars } from "../services/env-vars.js";
 
+const deploymentContainerName = (deploymentId: number) =>
+  `deployment-${deploymentId}`;
+
+/**
+ * Stop containers that currently serve an app without deleting them yet. Keeping
+ * them around until the replacement starts lets us restore service if Docker
+ * rejects the new container for any reason.
+ */
+const stopRunningAppContainers = async (
+  docker: Awaited<ReturnType<typeof getDocker>>,
+  appId: number,
+  replacementDeploymentId: number,
+  appDomain: string,
+) => {
+  const containers = await docker.listContainers({ all: true });
+  const previous = containers.filter(
+    (container) =>
+      (container.Labels?.["nmt.app-id"] === String(appId) ||
+        Object.entries(container.Labels ?? {}).some(
+          ([label, value]) =>
+            label.startsWith("traefik.http.routers.deployment-") &&
+            label.endsWith(".rule") &&
+            value.includes(appDomain),
+        )) &&
+      !container.Names.includes(
+        `/${deploymentContainerName(replacementDeploymentId)}`,
+      ),
+  );
+
+  const stopped: string[] = [];
+
+  for (const previousContainer of previous) {
+    if (previousContainer.State === "running") {
+      await docker.getContainer(previousContainer.Id).stop();
+      stopped.push(previousContainer.Id);
+    }
+  }
+
+  return { previous, stopped };
+};
+
+const restoreStoppedContainers = async (
+  docker: Awaited<ReturnType<typeof getDocker>>,
+  containerIds: string[],
+) => {
+  await Promise.all(
+    containerIds.map((containerId) => docker.getContainer(containerId).start()),
+  );
+};
+
+const removeReplacedContainers = async (
+  docker: Awaited<ReturnType<typeof getDocker>>,
+  containers: { Id: string }[],
+) => {
+  await Promise.all(
+    containers.map((container) =>
+      docker.getContainer(container.Id).remove({ force: true }),
+    ),
+  );
+};
+
 const deploy = async (userId: string, deploymentId: number) => {
   const deployment = await getDeployment(deploymentId);
 
@@ -86,12 +147,12 @@ const deploy = async (userId: string, deploymentId: number) => {
     await executeCommand(builderContainer, [
       "sh",
       "-c",
-      `git checkout ${deployment.branch}`,
+      `git checkout --detach ${deployment.commit}`,
     ]);
 
     await createDeploymentLogs({
       deploymentId,
-      message: `Git branch switched to ${deployment.branch}`,
+      message: `Checked out commit ${deployment.commit.slice(0, 12)} from ${deployment.branch}`,
       createdBy: userId,
     });
 
@@ -256,12 +317,14 @@ const deploy = async (userId: string, deploymentId: number) => {
     console.log(`Deploying application.`);
 
     const deploymentContainer = await docker.createContainer({
-      name: `deployment-${deploymentId}`,
+      name: deploymentContainerName(deploymentId),
 
       Image: imageName,
 
       Labels: {
         "traefik.enable": "true",
+        "nmt.app-id": String(deployment.appId),
+        "nmt.deployment-id": String(deploymentId),
 
         [`traefik.http.routers.deployment-${deploymentId}.rule`]: `Host(\`${appDomain}\`)`,
 
@@ -282,9 +345,21 @@ const deploy = async (userId: string, deploymentId: number) => {
       },
     });
 
-    await deploymentContainer.start();
+    const previousContainers = await stopRunningAppContainers(
+      docker,
+      deployment.appId,
+      deploymentId,
+      appDomain,
+    );
 
-    deploymentContainerStarted = true;
+    try {
+      await deploymentContainer.start();
+      deploymentContainerStarted = true;
+      await removeReplacedContainers(docker, previousContainers.previous);
+    } catch (error) {
+      await restoreStoppedContainers(docker, previousContainers.stopped);
+      throw error;
+    }
 
     /*
      * The deployment container is now using the image.

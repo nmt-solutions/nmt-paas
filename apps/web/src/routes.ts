@@ -3,6 +3,7 @@ import {
   Grid2x2,
   Home,
   LayoutDashboard,
+  Server,
   type Loader2,
 } from "lucide-react";
 import { match } from "path-to-regexp";
@@ -42,6 +43,14 @@ export const appRoutes: Route[] = [
     isSidebarItem: true,
   },
   {
+    label: "Admin",
+    path: "/admin",
+    icon: Server,
+    isProtected: true,
+    sidebar: true,
+    isSidebarItem: true,
+  },
+  {
     label: "New Project",
     path: "/projects/new",
     icon: FileBox,
@@ -52,6 +61,14 @@ export const appRoutes: Route[] = [
   {
     label: "Import Project",
     path: "/projects/new/import/:repoId",
+    icon: FileBox,
+    isProtected: true,
+    sidebar: true,
+    isSidebarItem: false,
+  },
+  {
+    label: "Application",
+    path: "/projects/:projectId/apps/:appId",
     icon: FileBox,
     isProtected: true,
     sidebar: true,

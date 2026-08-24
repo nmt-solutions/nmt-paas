@@ -5,6 +5,24 @@ import { ValidationErrors } from "./models/deployment-queue";
 import { tryCatch } from "./utils/try-catch";
 import { AxiosHeaders } from "axios";
 
+export type AdminHostResponse = {
+  data: {
+    health: string;
+    cpuCount: number;
+    memory: { total: number; used: number };
+    docker: {
+      containers: number;
+      runningContainers: number;
+      images: number;
+      volumes: number;
+    };
+  };
+};
+
+export type DockerResourcesResponse = {
+  data: { Id?: string; Name?: string; Names?: string[]; Repository?: string }[];
+};
+
 export class ControlPanelAPIClient {
   private baseUrl: string = env.variables.API_BASE_URL;
   private apiKey: string = env.variables.API_KEY;
@@ -42,6 +60,34 @@ export class ControlPanelAPIClient {
       };
     }
 
+    return response.data;
+  }
+
+  async getAdminHost(): Promise<AdminHostResponse> {
+    const response = await axios.get(`${this.baseUrl}/admin/host`, {
+      headers: this.getHeaders(),
+    });
+    return response.data as AdminHostResponse;
+  }
+
+  async getDockerResources(
+    resource: "containers" | "images" | "volumes",
+  ): Promise<DockerResourcesResponse> {
+    const response = await axios.get(
+      `${this.baseUrl}/admin/docker/${resource}`,
+      { headers: this.getHeaders() },
+    );
+    return response.data as DockerResourcesResponse;
+  }
+
+  async deleteDockerResource(
+    resource: "containers" | "images" | "volumes",
+    id: string,
+  ) {
+    const response = await axios.delete(
+      `${this.baseUrl}/admin/docker/${resource}/${encodeURIComponent(id)}`,
+      { headers: this.getHeaders() },
+    );
     return response.data;
   }
 }
