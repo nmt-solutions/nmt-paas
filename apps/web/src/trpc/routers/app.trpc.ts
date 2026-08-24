@@ -14,8 +14,32 @@ import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
 import { deleteProject } from "@repo/database/access-layer/project.dal";
+import { redeployApp } from "@/services/projects";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
+
+const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new TRPCError({
+          code: "TIMEOUT",
+          message: "The deployment service did not respond in time. Please try again.",
+        }),
+      );
+    }, milliseconds);
+
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 
 const requireApp = async (appId: number, userId: string) => {
   const app = await getUserApp(appId, userId);
@@ -112,6 +136,28 @@ export const appRouter = createTRPCRouter({
       });
       await deleteProject(app.projectId, ctx.userInfo.user.id);
       return { success: true };
+    }),
+  redeploy: authenticatedProcedure
+    .input(appIdInput)
+    .mutation(async ({ ctx, input }) => {
+      const app = await requireApp(input.appId, ctx.userInfo.user.id);
+      const previousDeployment = [...app.deployments].sort((a, b) => b.id - a.id)[0];
+      if (!previousDeployment) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "This app has no previous deployment to redeploy.",
+        });
+      }
+      const deployment = await withTimeout(
+        redeployApp({
+          userId: ctx.userInfo.user.id,
+          appId: app.id,
+          repoId: app.repoId,
+          branch: previousDeployment.branch,
+        }),
+        20_000,
+      );
+      return { deploymentId: deployment.id, branch: previousDeployment.branch };
     }),
   getLatestSuccessDeployment: authenticatedProcedure
     .input(appIdInput)

@@ -1,419 +1,49 @@
 "use client";
 
-import {
-  Activity,
-  ExternalLink,
-  FileText,
-  HeartPulse,
-  Plus,
-  Save,
-  Terminal,
-  Trash2,
-} from "lucide-react";
+import { Activity, ArrowLeft, Copy, ExternalLink, FileText, HeartPulse, Loader2, Maximize2, Plus, RefreshCw, Save, Terminal, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import toast from "../toast/toast";
 
 export default function AppDetails({ appId }: { appId: number }) {
-  const trpc = useTRPC();
-  const client = useQueryClient();
-  const router = useRouter();
-  const { data: app, isLoading } = useQuery(
-    trpc.app.get.queryOptions({ appId }),
-  );
-  const [envKey, setEnvKey] = useState("");
-  const [envValue, setEnvValue] = useState("");
-  const refresh = () =>
-    client.invalidateQueries({ queryKey: trpc.app.get.queryKey({ appId }) });
-  const addEnv = useMutation({
-    ...trpc.app.addEnvVar.mutationOptions(),
-    onSuccess: () => {
-      setEnvKey("");
-      setEnvValue("");
-      refresh();
-    },
-  });
-  const removeEnv = useMutation({
-    ...trpc.app.deleteEnvVar.mutationOptions(),
-    onSuccess: refresh,
-  });
-  const removeApp = useMutation({
-    ...trpc.app.delete.mutationOptions(),
-    onSuccess: () => router.push("/projects"),
-  });
-  const updateConfig = useMutation({
-    ...trpc.app.updateConfig.mutationOptions(),
-    onSuccess: refresh,
-  });
-  if (isLoading)
-    return <p className="text-muted-foreground">Loading application…</p>;
-  if (!app) return <p>Application not found.</p>;
-  const latest = [...app.deployments].sort((a, b) => b.id - a.id)[0];
-  const isHealthy = latest?.status === "success";
-  const config = app.frameworkConfig;
-  const logs = latest?.deploymentLogs ?? [];
-  const runtimeLogs = logs.filter(
-    (log) =>
-      !/Cloning|checked out|Installing|dependencies|Building|built successfully|Deploying|deployed successfully|Command failed/i.test(
-        log.message,
-      ),
-  );
-  return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <div className="glass-panel overflow-hidden p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm text-primary">
-              {app.project?.name ?? "Project"}
-            </p>
-            <h1 className="mt-1 text-3xl font-semibold">{app.appName}</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              GitHub repository · production application
-            </p>
-          </div>
-          <div
-            className={`rounded-full px-3 py-1.5 text-sm font-medium ${isHealthy ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"}`}
-          >
-            <HeartPulse className="mr-1 inline size-4" />
-            {isHealthy ? "Healthy" : (latest?.status ?? "Not deployed")}
-          </div>
-        </div>
-        <div className="mt-6 flex flex-wrap gap-3">
-          {app.appDomains
-            .filter((domain) => domain.env === "production")
-            .map((domain) => (
-              <a
-                key={domain.id}
-                className="glass-row inline-flex items-center gap-2 px-3 py-2 text-sm"
-                href={`http://${domain.domain}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <ExternalLink className="size-4" />
-                {domain.domain}
-              </a>
-            ))}
-          <span className="glass-row px-3 py-2 text-sm text-muted-foreground">
-            Commit {latest?.commit.slice(0, 8) ?? "—"}
-          </span>
-        </div>
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="glass-panel p-5">
-          <h2 className="flex items-center gap-2 font-semibold">
-            <Activity className="size-4 text-primary" />
-            Runtime health
-          </h2>
-          <p className="mt-4 text-sm text-muted-foreground">
-            The app is{" "}
-            {isHealthy
-              ? "reachable through its active deployment."
-              : "not currently reporting a successful deployment."}
-          </p>
-          <p className="mt-3 font-mono text-xs text-muted-foreground">
-            Last deployment: {latest?.status ?? "none"}
-          </p>
-        </section>
-        <section className="glass-panel p-5">
-          <h2 className="flex items-center gap-2 font-semibold">
-            <Plus className="size-4 text-primary" />
-            Environment variables
-          </h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Values are encrypted and never displayed after saving.
-          </p>
-          <div className="mt-4 space-y-2">
-            {app.envVars.map((item) => (
-              <div
-                className="glass-row flex items-center justify-between px-3 py-2 text-sm"
-                key={item.id}
-              >
-                <span className="font-mono">{item.key}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeEnv.mutate({ appId, envVarId: item.id })}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <Input
-              value={envKey}
-              onChange={(event) => setEnvKey(event.target.value)}
-              placeholder="KEY"
-            />
-            <Input
-              value={envValue}
-              onChange={(event) => setEnvValue(event.target.value)}
-              placeholder="value"
-              type="password"
-            />
-          </div>
-          <Button
-            className="mt-2"
-            size="sm"
-            disabled={!envKey || addEnv.isPending}
-            onClick={() =>
-              addEnv.mutate({ appId, key: envKey, value: envValue })
-            }
-          >
-            Add variable
-          </Button>
-        </section>
-      </div>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <LogPanel
-          appId={appId}
-          title="Deployment logs"
-          icon={<FileText className="size-4 text-primary" />}
-          logs={logs}
-        />
-        <LogPanel
-          appId={appId}
-          title="Application logs"
-          icon={<Terminal className="size-4 text-primary" />}
-          logs={runtimeLogs}
-          empty="Runtime output will appear here after the container starts."
-        />
-      </div>
-      {config && (
-        <section className="glass-panel p-5">
-          <h2 className="mb-5 font-semibold">Build & runtime configuration</h2>
-          <form
-            className="grid gap-4 md:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const data = new FormData(event.currentTarget);
-              updateConfig.mutate({
-                appId,
-                appName: String(data.get("appName")),
-                rootDirectory: String(data.get("rootDirectory")),
-                installCommand: String(data.get("installCommand")),
-                buildCommand: String(data.get("buildCommand")),
-                startCommand: String(data.get("startCommand")),
-                outputDirectory: String(data.get("outputDirectory")),
-                port: Number(data.get("port")),
-              });
-            }}
-          >
-            <Field name="appName" label="App name" value={app.appName} />
-            <Field
-              name="rootDirectory"
-              label="Root directory"
-              value={config.rootDirectory}
-            />
-            <Field
-              name="installCommand"
-              label="Install command"
-              value={config.installCommand}
-            />
-            <Field
-              name="buildCommand"
-              label="Build command"
-              value={config.buildCommand}
-            />
-            <Field
-              name="startCommand"
-              label="Start command"
-              value={config.startCommand}
-            />
-            <Field
-              name="outputDirectory"
-              label="Output directory"
-              value={config.outputDirectory}
-            />
-            <Field
-              name="port"
-              label="Port"
-              value={String(config.port)}
-              type="number"
-            />
-            <div className="flex items-end">
-              <Button type="submit" disabled={updateConfig.isPending}>
-                <Save />
-                Save configuration
-              </Button>
-            </div>
-          </form>
-        </section>
-      )}
-      <section className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
-        <h2 className="font-semibold text-destructive">Danger zone</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Remove this app from the workspace. Its deployment history remains
-          available for audit.
-        </p>
-        <Button
-          className="mt-4"
-          variant="destructive"
-          onClick={() => {
-            if (window.confirm(`Delete ${app.appName}?`))
-              removeApp.mutate({ appId });
-          }}
-        >
-          Delete app
-        </Button>
-      </section>
-    </div>
-  );
+  const trpc = useTRPC(); const client = useQueryClient(); const router = useRouter(); const search = useSearchParams();
+  const { data: app, isLoading, isError, refetch: refetchApp } = useQuery({ ...trpc.app.get.queryOptions({ appId }), refetchInterval: 2_500 });
+  const [envKey, setEnvKey] = useState(""); const [envValue, setEnvValue] = useState(""); const [deleteOpen, setDeleteOpen] = useState(false); const [needsRedeploy, setNeedsRedeploy] = useState(false); const [activeTab, setActiveTab] = useState("overview");
+  const refresh = () => client.invalidateQueries({ queryKey: trpc.app.get.queryKey({ appId }) });
+  const addEnv = useMutation({ ...trpc.app.addEnvVar.mutationOptions(), onSuccess: () => { setEnvKey(""); setEnvValue(""); setNeedsRedeploy(true); refresh(); toast({ title: "Environment variable saved", description: "Redeploy to apply it to the running application.", variant: "success" }); }, onError: (error) => toast({ title: "Could not save variable", description: error.message, variant: "error" }) });
+  const removeEnv = useMutation({ ...trpc.app.deleteEnvVar.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Environment variable removed", description: "Redeploy to update the running application.", variant: "success" }); }, onError: (error) => toast({ title: "Could not remove variable", description: error.message, variant: "error" }) });
+  const removeApp = useMutation({ ...trpc.app.delete.mutationOptions(), onSuccess: () => { toast({ title: "Application deleted", description: "The application and its project were removed.", variant: "success" }); router.push("/projects"); }, onError: (error) => toast({ title: "Could not delete application", description: error.message, variant: "error" }) });
+  const updateConfig = useMutation({ ...trpc.app.updateConfig.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Configuration saved", description: "Redeploy to use the updated build settings.", variant: "success" }); }, onError: (error) => toast({ title: "Could not save configuration", description: error.message, variant: "error" }) });
+  const redeploy = useMutation({ ...trpc.app.redeploy.mutationOptions(), onSuccess: (result) => { setNeedsRedeploy(false); refresh(); toast({ title: "Redeployment queued", description: `Building ${result.branch} now. Opening live deployment logs.`, variant: "success" }); router.replace(`?deployment=${result.deploymentId}`); }, onError: (error) => toast({ title: "Could not queue redeployment", description: error.message.includes("timeout") ? "The deployment service did not respond in time. Please try again." : error.message, variant: "error" }) });
+  useEffect(() => { const latestStatus = app?.deployments ? [...app.deployments].sort((a, b) => b.id - a.id)[0]?.status.toLowerCase() : undefined; if (latestStatus && ["queued", "building", "deploying"].includes(latestStatus)) void refetchApp(); }, [app, refetchApp]);
+  if (isLoading) return <LoadingDetails />;
+  if (isError || !app) return <div className="glass-panel p-8 text-center"><h1 className="font-semibold">Application unavailable</h1><p className="mt-2 text-sm text-muted-foreground">It may have been deleted or you may no longer have access.</p><Button asChild variant="outline" className="mt-5"><Link href="/projects">Back to projects</Link></Button></div>;
+  const deployments = [...app.deployments].sort((a, b) => b.id - a.id); const latest = deployments[0]; const selectedDeploymentId = Number(search.get("deployment")); const selectedDeployment = deployments.find((deployment) => deployment.id === selectedDeploymentId) ?? latest; const status = latest?.status ?? "not deployed"; const isHealthy = status === "success"; const config = app.frameworkConfig; const logs = selectedDeployment?.deploymentLogs ?? [];
+  return <div className="mx-auto w-full max-w-7xl space-y-6 pb-10">
+    <Link href="/projects" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground"><ArrowLeft className="size-4" />All projects</Link>
+    <header className="glass-panel relative overflow-hidden p-6 sm:p-8"><div className="absolute -right-20 -top-24 size-64 rounded-full bg-primary/15 blur-3xl" /><div className="relative flex flex-wrap items-start justify-between gap-5"><div className="min-w-0"><p className="text-sm font-medium text-primary">{app.project?.name ?? "Project"}</p><h1 className="mt-2 truncate text-3xl font-semibold tracking-tight sm:text-4xl">{app.appName}</h1><p className="mt-3 text-sm text-muted-foreground">Production application · deployment settings and live output</p></div><div className="flex flex-wrap items-center gap-2"><StatusBadge status={status} /><Button disabled={redeploy.isPending || !latest} onClick={() => redeploy.mutate({ appId })}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy</Button></div></div><div className="relative mt-7 flex flex-wrap gap-2">{app.appDomains.filter((domain) => domain.env === "production").map((domain) => <a key={domain.id} className="glass-row inline-flex items-center gap-2 px-3 py-2 text-sm font-medium" href={`http://${domain.domain}`} target="_blank" rel="noreferrer"><ExternalLink className="size-4 text-primary" />{domain.domain}</a>)}<span className="glass-row px-3 py-2 font-mono text-xs text-muted-foreground">{latest ? `Commit ${latest.commit.slice(0, 8)}` : "No deployment yet"}</span></div></header>
+    <div className="grid gap-4 lg:grid-cols-3"><InfoCard icon={<HeartPulse />} label="Production status" value={isHealthy ? "Healthy" : status} note={isHealthy ? "Latest deployment is serving traffic." : "Open deployment logs to follow progress."} /><InfoCard icon={<Activity />} label="Latest deployment" value={latest ? `#${latest.id}` : "—"} note={latest ? `Branch ${latest.branch}` : "Deploy this app to get started."} /><InfoCard icon={<FileText />} label="Environment" value="Production" note={`${app.envVars.length} variable${app.envVars.length === 1 ? "" : "s"} configured`} /></div>
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-6"><TabsList variant="line" className="w-full justify-start border-b border-border/70"><TabsTrigger value="overview" className="px-4 text-sm">Overview</TabsTrigger><TabsTrigger value="deployments" className="px-4 text-sm">Deployments <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{deployments.length}</span></TabsTrigger></TabsList><TabsContent value="overview" className="mt-0"><div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(20rem,0.9fr)]"><div className="space-y-6"><LogPanel appId={appId} title="Deployment logs" icon={<FileText className="size-4" />} logs={logs} highlightedDeploymentId={selectedDeployment?.id} /><LogPanel appId={appId} title="Application logs" icon={<Terminal className="size-4" />} logs={[]} empty="Runtime output will appear after a successful deployment." />{config && <ConfigForm appId={appId} appName={app.appName} config={config} pending={updateConfig.isPending} onSave={(data) => updateConfig.mutate(data)} />}</div>
+      <aside className="space-y-6">{needsRedeploy && <section className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5"><h2 className="font-semibold text-amber-800 dark:text-amber-200">Changes are ready</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Your saved environment or build changes need a new deployment to take effect.</p><Button className="mt-4 w-full" variant="outline" disabled={redeploy.isPending} onClick={() => redeploy.mutate({ appId })}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy now</Button></section>}<section className="glass-panel p-5"><h2 className="flex items-center gap-2 font-semibold"><Plus className="size-4 text-primary" />Environment variables</h2><p className="mt-1 text-sm text-muted-foreground">Values stay hidden after saving.</p><div className="mt-5 space-y-2">{app.envVars.length ? app.envVars.map((item) => <div className="glass-row flex items-center justify-between gap-2 px-3 py-2" key={item.id}><span className="min-w-0 truncate font-mono text-xs">{item.key}</span><Button variant="ghost" size="icon" aria-label={`Remove ${item.key}`} disabled={removeEnv.isPending} onClick={() => removeEnv.mutate({ appId, envVarId: item.id })}><Trash2 className="size-4 text-destructive" /></Button></div>) : <p className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">No variables added.</p>}</div><div className="mt-4 space-y-2"><Input value={envKey} onChange={(event) => setEnvKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))} placeholder="VARIABLE_NAME" autoCapitalize="characters" /><Input value={envValue} onChange={(event) => setEnvValue(event.target.value)} placeholder="Value" type="password" /><Button className="w-full" size="sm" disabled={!envKey || addEnv.isPending} onClick={() => addEnv.mutate({ appId, key: envKey, value: envValue })}>{addEnv.isPending && <Loader2 className="animate-spin" />}Add variable</Button></div></section><section className="rounded-3xl border border-destructive/25 bg-destructive/5 p-5"><h2 className="font-semibold text-destructive">Danger zone</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Permanently remove this application and its project.</p><Button className="mt-4" variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 />Delete app</Button></section></aside></div></TabsContent><TabsContent value="deployments" className="mt-0"><DeploymentHistory deployments={deployments} activeDeploymentId={selectedDeployment?.id} onSelect={(deploymentId) => { setActiveTab("overview"); router.replace(`?deployment=${deploymentId}`); }} /></TabsContent></Tabs>
+    <ConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} title={`Delete ${app.appName}?`} description="This permanently removes the app and its project. This action cannot be undone." confirmLabel="Delete app" pending={removeApp.isPending} onConfirm={() => removeApp.mutate({ appId })} />
+  </div>;
 }
-function LogPanel({
-  appId,
-  title,
-  icon,
-  logs,
-  empty = "No logs yet.",
-}: {
-  appId: number;
-  title: "Deployment logs" | "Application logs";
-  icon: React.ReactNode;
-  logs: { id: number; message: string }[];
-  empty?: string;
-}) {
-  const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]);
 
-  const trpc = useTRPC();
-  const {
-    data: latestSuccessDeployment,
-    error,
-    isPending,
-  } = useQuery(trpc.app.getLatestSuccessDeployment.queryOptions({ appId }));
-
-  useEffect(() => {
-    if (isPending) {
-      return;
-    }
-
-    if (!latestSuccessDeployment) {
-      return;
-    }
-
-    if (error) {
-      toast({
-        title: "Error Fetching Deployment",
-        description: error.message,
-        variant: "error",
-      });
-      return;
-    }
-
-    const controller = new AbortController();
-
-    fetch(`/api/apps/${appId}/runtime-logs`, {
-      signal: controller.signal,
-      credentials: "same-origin",
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Failed to stream runtime logs: ${response.status}`);
-        }
-
-        if (!response.body) {
-          throw new Error("Runtime log stream is not available.");
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split("\n\n");
-          buffer = events.pop() ?? "";
-
-          for (const event of events) {
-            const dataLine = event
-              .split("\n")
-              .find((line) => line.startsWith("data:"));
-            if (!dataLine) continue;
-
-            const data = dataLine.slice("data:".length).trim();
-            if (!data) continue;
-
-            try {
-              const parsed: unknown = JSON.parse(data);
-              const log =
-                typeof parsed === "string"
-                  ? parsed
-                  : typeof parsed === "object" &&
-                      parsed !== null &&
-                      "message" in parsed &&
-                      typeof parsed.message === "string"
-                    ? parsed.message
-                    : JSON.stringify(parsed);
-              setRuntimeLogs((current) => [...current, log]);
-            } catch {
-              setRuntimeLogs((current) => [...current, data]);
-            }
-          }
-        }
-      })
-      .catch((error) => {
-        if (error.name !== "AbortError") {
-          console.error(error);
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [appId, error, isPending, latestSuccessDeployment]);
-
-  const isDeploymentLogs = title === "Deployment logs";
-
-  return (
-    <section className="glass-panel overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-white/10 px-5 py-4 font-semibold">
-        {icon}
-        {title}
-      </div>
-      {isDeploymentLogs && (
-        <pre className="max-h-80 overflow-auto bg-black/70 p-4 font-mono text-xs leading-6 text-emerald-100">
-          {logs.length ? logs.map((log) => log.message).join("\n") : empty}
-        </pre>
-      )}
-
-      {!isDeploymentLogs && (
-        <pre className="max-h-80 overflow-auto bg-black/70 p-4 font-mono text-xs leading-6 text-emerald-100">
-          {runtimeLogs.length
-            ? runtimeLogs.map((log) => log).join("\n")
-            : empty}
-        </pre>
-      )}
-    </section>
-  );
-}
-function Field({
-  name,
-  label,
-  value,
-  type = "text",
-}: {
-  name: string;
-  label: string;
-  value: string;
-  type?: string;
-}) {
-  return (
-    <label className="grid gap-2">
-      <Label htmlFor={name}>{label}</Label>
-      {name.includes("Command") ? (
-        <Textarea id={name} name={name} defaultValue={value} />
-      ) : (
-        <Input id={name} name={name} defaultValue={value} type={type} />
-      )}
-    </label>
-  );
-}
+function ConfigForm({ appId, appName, config, pending, onSave }: { appId: number; appName: string; config: { rootDirectory: string; installCommand: string; buildCommand: string; startCommand: string; outputDirectory: string; port: number }; pending: boolean; onSave: (data: { appId: number; appName: string; rootDirectory: string; installCommand: string; buildCommand: string; startCommand: string; outputDirectory: string; port: number }) => void }) { return <section className="glass-panel p-5 sm:p-6"><div><h2 className="font-semibold">Build & runtime</h2><p className="mt-1 text-sm text-muted-foreground">Defaults are detected from your framework. Adjust only when your repository needs it.</p></div><form className="mt-6 grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); onSave({ appId, appName: String(data.get("appName")).trim(), rootDirectory: String(data.get("rootDirectory")).trim(), installCommand: String(data.get("installCommand")).trim(), buildCommand: String(data.get("buildCommand")).trim(), startCommand: String(data.get("startCommand")).trim(), outputDirectory: String(data.get("outputDirectory")).trim(), port: Number(data.get("port")) }); }}><Field name="appName" label="App name" value={appName} /><Field name="rootDirectory" label="Root directory" value={config.rootDirectory} /><Field name="installCommand" label="Install command" value={config.installCommand} /><Field name="buildCommand" label="Build command" value={config.buildCommand} /><Field name="startCommand" label="Start command" value={config.startCommand} /><Field name="outputDirectory" label="Output directory" value={config.outputDirectory} /><Field name="port" label="Port" value={String(config.port)} type="number" /><div className="flex items-end"><Button type="submit" disabled={pending}>{pending && <Loader2 className="animate-spin" />}<Save />Save changes</Button></div></form></section>; }
+function StatusBadge({ status }: { status: string }) { const good = status === "success"; const pending = ["queued", "building", "deploying"].includes(status.toLowerCase()); return <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium ${good ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : pending ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300" : "border-muted bg-muted/60 text-muted-foreground"}`}><span className={`size-2 rounded-full ${good ? "bg-emerald-500" : pending ? "animate-pulse bg-amber-500" : "bg-muted-foreground"}`} />{good ? "Healthy" : status}</div>; }
+function InfoCard({ icon, label, value, note }: { icon: React.ReactNode; label: string; value: string; note: string }) { return <section className="glass-panel p-5"><div className="flex items-center gap-2 text-primary">{icon}<span className="text-sm font-medium text-muted-foreground">{label}</span></div><p className="mt-4 text-xl font-semibold capitalize">{value}</p><p className="mt-1 text-sm text-muted-foreground">{note}</p></section>; }
+function DeploymentHistory({ deployments, activeDeploymentId, onSelect }: { deployments: { id: number; status: string; branch: string; commit: string; createdAt: Date | string | null }[]; activeDeploymentId?: number; onSelect: (deploymentId: number) => void }) { return <section className="glass-panel overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-5 sm:px-6"><div><h2 className="font-semibold">Deployment history</h2><p className="mt-1 text-sm text-muted-foreground">Every production release, newest first.</p></div><span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{deployments.length} total</span></div>{deployments.length ? <div className="divide-y divide-border/70">{deployments.map((deployment) => { const isActive = deployment.id === activeDeploymentId; const isSuccess = deployment.status === "success"; const isRunning = ["queued", "building", "deploying"].includes(deployment.status.toLowerCase()); const timestamp = deployment.createdAt ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(deployment.createdAt)) : "Unknown time"; return <button type="button" key={deployment.id} onClick={() => onSelect(deployment.id)} className={`flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-primary/5 sm:px-6 ${isActive ? "bg-primary/5" : ""}`}><span className={`size-2.5 shrink-0 rounded-full ${isSuccess ? "bg-emerald-500" : isRunning ? "animate-pulse bg-amber-500" : "bg-destructive"}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-3 gap-y-1"><span className="font-medium">Deployment #{deployment.id}</span><span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">{deployment.status}</span>{isActive && <span className="text-xs font-medium text-primary">Viewing logs</span>}</div><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground"><span>{deployment.branch}</span><span>{deployment.commit.slice(0, 8)}</span><span className="font-sans">{timestamp}</span></div></div><span className="text-sm font-medium text-primary">View logs</span></button>; })}</div> : <div className="px-6 py-12 text-center text-sm text-muted-foreground">No deployments yet.</div>}</section>; }
+function LoadingDetails() { return <div className="space-y-5"><div className="glass-panel h-48 animate-pulse" /><div className="grid gap-4 md:grid-cols-3">{[1, 2, 3].map((item) => <div className="glass-panel h-32 animate-pulse" key={item} />)}</div></div>; }
+function LogPanel({ appId, title, icon, logs, empty = "No logs yet.", highlightedDeploymentId }: { appId: number; title: "Deployment logs" | "Application logs"; icon: React.ReactNode; logs: { id: number; message: string }[]; empty?: string; highlightedDeploymentId?: number }) { const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]); const [fullscreen, setFullscreen] = useState(false); const trpc = useTRPC(); const isDeploymentLogs = title === "Deployment logs"; const { data: latestSuccessDeployment } = useQuery({ ...trpc.app.getLatestSuccessDeployment.queryOptions({ appId }), enabled: !isDeploymentLogs }); useEffect(() => { if (isDeploymentLogs || !latestSuccessDeployment) return; const controller = new AbortController(); fetch(`/api/apps/${appId}/runtime-logs`, { signal: controller.signal, credentials: "same-origin" }).then(async (response) => { if (!response.ok || !response.body) throw new Error("Runtime log stream is unavailable."); const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const event of events) { const line = event.split("\n").find((item) => item.startsWith("data:")); if (!line) continue; const data = line.slice(5).trim(); if (data) setRuntimeLogs((current) => [...current, data]); } } }).catch((error: unknown) => { if (error instanceof Error && error.name !== "AbortError") console.error(error); }); return () => controller.abort(); }, [appId, isDeploymentLogs, latestSuccessDeployment]); const content = isDeploymentLogs ? (logs.length ? logs.map((log) => log.message).join("\n") : empty) : (runtimeLogs.length ? runtimeLogs.join("\n") : empty); return <><section className="glass-panel overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><h2 className="flex items-center gap-2 font-semibold"><span className="text-primary">{icon}</span>{title}</h2><p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">{isDeploymentLogs && <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />}{isDeploymentLogs && highlightedDeploymentId ? `Live · following deployment #${highlightedDeploymentId}` : isDeploymentLogs ? "Live build, deploy, and error output" : "Live container output"}</p></div><Button variant="ghost" size="icon" aria-label={`View ${title} fullscreen`} onClick={() => setFullscreen(true)}><Maximize2 className="size-4" /></Button></div><LogOutput content={content} /></section><Dialog open={fullscreen} onOpenChange={setFullscreen}><DialogContent className="h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] p-0"><DialogHeader className="border-b border-border/70 p-5"><DialogTitle className="flex items-center gap-2"><span className="text-primary">{icon}</span>{title}</DialogTitle><DialogDescription>Live output updates automatically while a deployment is running.</DialogDescription></DialogHeader><LogOutput content={content} fullscreen /></DialogContent></Dialog></>; }
+function LogOutput({ content, fullscreen = false }: { content: string; fullscreen?: boolean }) { const [copied, setCopied] = useState(false); return <div className={`relative bg-slate-950 ${fullscreen ? "h-[calc(100%-5.75rem)]" : ""}`}><Button variant="ghost" size="sm" className="absolute right-3 top-3 z-10 bg-white/10 text-slate-100 hover:bg-white/20 hover:text-white" onClick={() => { navigator.clipboard.writeText(content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => undefined); }}><Copy className="size-3.5" />{copied ? "Copied" : "Copy"}</Button><pre className={`${fullscreen ? "h-full" : "max-h-96"} overflow-auto p-5 pr-20 font-mono text-xs leading-6 whitespace-pre-wrap text-emerald-100`}>{content}</pre></div>; }
+function Field({ name, label, value, type = "text" }: { name: string; label: string; value: string; type?: string }) { return <label className="grid gap-2"><Label htmlFor={name}>{label}</Label>{name.includes("Command") ? <Textarea id={name} name={name} defaultValue={value} /> : <Input id={name} name={name} defaultValue={value} type={type} />}</label>; }

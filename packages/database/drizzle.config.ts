@@ -16,7 +16,4 @@ if (env.variables.DB_ENV === "production") {
   config.dbCredentials.url = env.variables.PROD_DATABASE_URL;
 }
 
-console.log("Drizzle Config:");
-console.log(JSON.stringify(config, null, 2));
-
 export default defineConfig(config);

@@ -71,7 +71,7 @@ export const deploymentRouter = createTRPCRouter({
           });
         }
 
-        await initializeNewProjectAndDeploy({
+        const initialized = await initializeNewProjectAndDeploy({
           userId,
           repoId,
           repo,
@@ -80,7 +80,12 @@ export const deploymentRouter = createTRPCRouter({
           frameworkConfig,
         });
 
-        return { message: "Deployment Queued" };
+        return {
+          message: "Deployment Queued",
+          appId: initialized.app.id,
+          projectId: initialized.project.id,
+          deploymentId: initialized.deployment.id,
+        };
       }
 
       if (!branch?.trim()) {
@@ -90,7 +95,7 @@ export const deploymentRouter = createTRPCRouter({
         });
       }
 
-      await deployProject({
+      const deployment = await deployProject({
         userId,
         repoId,
         repo,
@@ -99,6 +104,11 @@ export const deploymentRouter = createTRPCRouter({
         appId: app.id,
       });
 
-      return { message: "Deployment Queued" };
+      return {
+        message: "Deployment Queued",
+        appId: app.id,
+        projectId: app.projectId,
+        deploymentId: deployment.id,
+      };
     }),
 });

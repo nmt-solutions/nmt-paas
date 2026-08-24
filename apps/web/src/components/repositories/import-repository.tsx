@@ -14,8 +14,9 @@ import {
   Plus,
   X,
 } from "lucide-react";
-import Link from "next/dist/client/link";
+import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import toast, { Toast } from "../toast/toast";
 import { Button } from "../ui/button";
@@ -76,6 +77,7 @@ const ImportRepository = ({
   const [installCommand, setInstallCommand] = useState("");
 
   const trpc = useTRPC();
+  const router = useRouter();
 
   const { data, isPending, isError, error } = useQuery(
     trpc.git.getRepository.queryOptions({
@@ -171,7 +173,13 @@ const ImportRepository = ({
         owner: data?.repository.owner.name ?? "",
         branch,
         envVars: envVarsArray,
-        frameworkConfig: { ...frameworkPreset },
+        frameworkConfig: {
+          ...frameworkPreset,
+          rootDirectory: rootDirEnabled ? rootDir : frameworkPreset.rootDirectory,
+          installCommand: installCommandEnabled ? installCommand : frameworkPreset.installCommand,
+          buildCommand: buildCommandEnabled ? buildCommand : frameworkPreset.buildCommand,
+          outputDirectory: outputDirectoryEnabled ? outputDirectory : frameworkPreset.outputDirectory,
+        },
       },
       {
         onError: (err) => {
@@ -181,12 +189,13 @@ const ImportRepository = ({
             variant: "error",
           });
         },
-        onSuccess: () => {
+        onSuccess: (result) => {
           toast({
             title: "Deployment Queued",
-            description: "Your deployment has been queued successfully.",
+            description: "Opening the deployment details and live logs.",
             variant: "success",
           });
+          router.push(`/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`);
         },
       },
     );

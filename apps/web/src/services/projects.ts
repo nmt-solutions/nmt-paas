@@ -68,6 +68,43 @@ export const deployProject = async (params: {
   if (response.status === "error") {
     throw new Error(response.message);
   }
+
+  return deployment;
+};
+
+/** Queue a new production deployment using the repository already linked to an app. */
+export const redeployApp = async ({
+  userId,
+  appId,
+  repoId,
+  branch,
+}: {
+  userId: string;
+  appId: number;
+  repoId: number;
+  branch: string;
+}) => {
+  const { octokit } = await getUserGithubOctokit(userId);
+  const { data: repository, error } = await tryCatch(
+    octokit.request("GET /repositories/{repository_id}", { repository_id: repoId }),
+  );
+
+  if (error || !repository.data.owner?.login) {
+    throw new TRPCError({
+      code: "BAD_GATEWAY",
+      message: "Unable to access the connected GitHub repository.",
+    });
+  }
+
+  return deployProject({
+    octokit,
+    userId,
+    appId,
+    repoId,
+    owner: repository.data.owner.login,
+    repo: repository.data.name,
+    branch,
+  });
 };
 
 export const initializeNewProjectAndDeploy = async ({
@@ -189,7 +226,7 @@ export const initializeNewProjectAndDeploy = async ({
     }
   }
 
-  await deployProject({
+  const deployment = await deployProject({
     octokit,
     userId,
     repoId,
@@ -198,4 +235,6 @@ export const initializeNewProjectAndDeploy = async ({
     branch: repository.default_branch,
     appId: app.id,
   });
+
+  return { app, project, deployment };
 };

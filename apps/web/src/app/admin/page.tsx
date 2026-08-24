@@ -4,12 +4,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { HardDrive, MemoryStick, Server, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTRPC } from "@/trpc/client";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 export default function AdminPage() {
   const trpc = useTRPC();
   const [resource, setResource] = useState<"containers" | "images" | "volumes">(
     "containers",
   );
+  const [resourceToDelete, setResourceToDelete] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery(
     trpc.admin.host.queryOptions(),
   );
@@ -46,7 +48,7 @@ export default function AdminPage() {
     Repository?: string;
   }[];
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6">
       <div>
         <p className="text-sm font-medium text-primary">Administration</p>
         <h1 className="mt-1 text-3xl font-semibold">Host health</h1>
@@ -105,10 +107,7 @@ export default function AdminPage() {
                 <button
                   className="rounded-md p-2 text-destructive hover:bg-destructive/10"
                   aria-label={`Delete ${id}`}
-                  onClick={() => {
-                    if (window.confirm(`Delete ${id}?`))
-                      remove.mutate({ resource, id });
-                  }}
+                  onClick={() => setResourceToDelete(id)}
                 >
                   <Trash2 className="size-4" />
                 </button>
@@ -122,6 +121,18 @@ export default function AdminPage() {
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={Boolean(resourceToDelete)}
+        onOpenChange={(open) => !open && setResourceToDelete(null)}
+        title={`Delete ${resource}?`}
+        description="This Docker resource will be removed immediately and cannot be recovered."
+        confirmLabel={`Delete ${resource.slice(0, -1)}`}
+        pending={remove.isPending}
+        onConfirm={() => {
+          if (!resourceToDelete) return;
+          remove.mutate({ resource, id: resourceToDelete }, { onSuccess: () => setResourceToDelete(null) });
+        }}
+      />
     </div>
   );
 }

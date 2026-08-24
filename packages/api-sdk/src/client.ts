@@ -42,7 +42,9 @@ export class ControlPanelAPIClient {
       axios.post<APIResponse<true, ValidationErrors>>(
         `${this.baseUrl}/deployments/queue`,
         { deploymentId, userId },
-        { headers: this.getHeaders() },
+        // Queueing must be quick. A bounded request prevents the UI from
+        // remaining in a loading state forever when the control plane is down.
+        { headers: this.getHeaders(), timeout: 15_000 },
       ),
     );
 

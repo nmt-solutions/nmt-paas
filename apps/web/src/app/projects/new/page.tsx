@@ -2,7 +2,7 @@ import NewProject from "@/components/repositories/new-project";
 
 const NewProjectPage = () => {
   return (
-    <div className="mx-auto w-full max-w-5xl">
+    <div className="w-full">
       <div className="mb-8">
         <p className="text-sm font-medium text-primary">Create</p>
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import toast from "@/components/toast/toast";
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const ProjectsPage = () => {
   const trpc = useTRPC();
@@ -31,13 +32,17 @@ const ProjectsPage = () => {
     refetch,
   } = useQuery(trpc.project.list.queryOptions());
   const [deletingProjectIds, setDeletingProjectIds] = useState<number[]>([]);
+  const [projectToDelete, setProjectToDelete] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
 
   const { mutate: deleteProject, isPending } = useMutation(
     trpc.project.deleteProject.mutationOptions(),
   );
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
+    <div className="w-full space-y-8">
       <div className="flex items-end justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-primary">Workspace</p>
@@ -81,34 +86,7 @@ const ProjectsPage = () => {
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuItem
                           variant="destructive"
-                          onClick={() => {
-                            const confirmed = window.confirm(
-                              `Delete Project ${project.name}?`,
-                            );
-
-                            if (confirmed) {
-                              setDeletingProjectIds((prev) => [
-                                ...prev,
-                                project.id,
-                              ]);
-                              deleteProject(
-                                { projectId: project.id },
-                                {
-                                  onSuccess: () => {
-                                    setDeletingProjectIds((prev) =>
-                                      prev.filter((id) => id !== project.id),
-                                    );
-                                    toast({
-                                      title: "Project Deleted",
-                                      description: `${project.name} deleted successfully.`,
-                                      variant: "success",
-                                    });
-                                    refetch();
-                                  },
-                                },
-                              );
-                            }
-                          }}
+                          onClick={() => setProjectToDelete({ id: project.id, name: project.name })}
                         >
                           <Trash2 />
                           Delete
@@ -144,6 +122,25 @@ const ProjectsPage = () => {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(projectToDelete)}
+        onOpenChange={(open) => !open && setProjectToDelete(null)}
+        title={`Delete ${projectToDelete?.name ?? "project"}?`}
+        description="This removes the project and its applications. This action cannot be undone."
+        confirmLabel="Delete project"
+        pending={isPending}
+        onConfirm={() => {
+          if (!projectToDelete) return;
+          const current = projectToDelete;
+          setDeletingProjectIds((prev) => [...prev, current.id]);
+          deleteProject({ projectId: current.id }, { onSuccess: () => {
+            setDeletingProjectIds((prev) => prev.filter((id) => id !== current.id));
+            setProjectToDelete(null);
+            toast({ title: "Project deleted", description: `${current.name} was removed.`, variant: "success" });
+            refetch();
+          }, onError: (error) => { setDeletingProjectIds((prev) => prev.filter((id) => id !== current.id)); toast({ title: "Could not delete project", description: error.message, variant: "error" }); }});
+        }}
+      />
     </div>
   );
 };
