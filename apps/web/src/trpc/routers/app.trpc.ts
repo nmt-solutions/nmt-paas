@@ -1,14 +1,19 @@
-import z from "zod";
-import { getUserApp, updateApp } from "@repo/database/access-layer/apps.dal";
-import { updateFrameworkConfig } from "@repo/database/access-layer/framework-config.dal";
+import cpApiClient from "@/services/cp-api-client";
+import { saveEnvVars } from "@/services/env-vars";
+import {
+  getAppLatestDeployment,
+  getUserApp,
+  updateApp,
+} from "@repo/database/access-layer/apps.dal";
 import {
   deactivateEnvVar,
   getEnvVarKeys,
 } from "@repo/database/access-layer/env-vars.dal";
+import { updateFrameworkConfig } from "@repo/database/access-layer/framework-config.dal";
 import { TRPCError } from "@trpc/server";
+import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { saveEnvVars } from "@/services/env-vars";
-import cpApiClient from "@/services/cp-api-client";
+import { deleteProject } from "@repo/database/access-layer/project.dal";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
 
@@ -105,6 +110,15 @@ export const appRouter = createTRPCRouter({
       await updateApp(input.appId, ctx.userInfo.user.id, {
         resourceStatus: "inactive",
       });
+      await deleteProject(app.projectId, ctx.userInfo.user.id);
       return { success: true };
+    }),
+  getLatestSuccessDeployment: authenticatedProcedure
+    .input(appIdInput)
+    .query(async ({ ctx, input }) => {
+      const appId = input.appId;
+      const userId = ctx.userInfo.user.id;
+
+      return getAppLatestDeployment(appId, userId);
     }),
 });

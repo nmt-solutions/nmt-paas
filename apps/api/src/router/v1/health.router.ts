@@ -1,5 +1,5 @@
 import { Router } from "express";
-import getHealth from "../../controllers/v1/health/getHealth.js";
+import getHealth from "../../controllers/v1/health/get-health.js";
 
 const healthRouter = Router();
 

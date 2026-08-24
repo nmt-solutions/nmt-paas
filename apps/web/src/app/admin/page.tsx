@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { HardDrive, MemoryStick, Server, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTRPC } from "@/trpc/client";
 
 export default function AdminPage() {
@@ -10,12 +10,23 @@ export default function AdminPage() {
   const [resource, setResource] = useState<"containers" | "images" | "volumes">(
     "containers",
   );
-  const { data, isLoading, error } = useQuery(trpc.admin.host.queryOptions());
+  const { data, isLoading, error, refetch } = useQuery(
+    trpc.admin.host.queryOptions(),
+  );
   const inventory = useQuery(trpc.admin.resources.queryOptions({ resource }));
   const remove = useMutation({
     ...trpc.admin.deleteResource.mutationOptions(),
     onSuccess: () => inventory.refetch(),
   });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      refetch();
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [refetch]);
+
   if (isLoading)
     return <p className="text-muted-foreground">Loading host health…</p>;
   if (error)

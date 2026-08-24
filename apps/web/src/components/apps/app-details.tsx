@@ -12,12 +12,14 @@ import {
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import toast from "../toast/toast";
+import cpApiClient from "@/services/cp-api-client";
 
 export default function AppDetails({ appId }: { appId: number }) {
   const trpc = useTRPC();
@@ -171,11 +173,13 @@ export default function AppDetails({ appId }: { appId: number }) {
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <LogPanel
+          appId={appId}
           title="Deployment logs"
           icon={<FileText className="size-4 text-primary" />}
           logs={logs}
         />
         <LogPanel
+          appId={appId}
           title="Application logs"
           icon={<Terminal className="size-4 text-primary" />}
           logs={runtimeLogs}
@@ -264,25 +268,87 @@ export default function AppDetails({ appId }: { appId: number }) {
   );
 }
 function LogPanel({
+  appId,
   title,
   icon,
   logs,
   empty = "No logs yet.",
 }: {
-  title: string;
+  appId: number;
+  title: "Deployment logs" | "Application logs";
   icon: React.ReactNode;
   logs: { id: number; message: string }[];
   empty?: string;
 }) {
+  const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]);
+
+  const trpc = useTRPC();
+  const {
+    data: latestSuccessDeployment,
+    error,
+    isPending,
+  } = useQuery(trpc.app.getLatestSuccessDeployment.queryOptions({ appId }));
+
+  useEffect(() => {
+    if (isPending) {
+      return;
+    }
+
+    if (!latestSuccessDeployment) {
+      return;
+    }
+
+    if (error) {
+      toast({
+        title: "Error Fetching Deployment",
+        description: error.message,
+        variant: "error",
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    cpApiClient
+      .streamRuntimeLogs(
+        latestSuccessDeployment.id,
+        (log) => {
+          setRuntimeLogs((current) => [...current, log]);
+        },
+        controller.signal,
+      )
+      .catch((error) => {
+        if (error.name !== "AbortError") {
+          console.error(error);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [error, isPending, latestSuccessDeployment]);
+
+  const isDeploymentLogs = title === "Deployment logs";
+
   return (
     <section className="glass-panel overflow-hidden">
       <div className="flex items-center gap-2 border-b border-white/10 px-5 py-4 font-semibold">
         {icon}
         {title}
       </div>
-      <pre className="max-h-80 overflow-auto bg-black/70 p-4 font-mono text-xs leading-6 text-emerald-100">
-        {logs.length ? logs.map((log) => log.message).join("\n") : empty}
-      </pre>
+      {isDeploymentLogs && (
+        <pre className="max-h-80 overflow-auto bg-black/70 p-4 font-mono text-xs leading-6 text-emerald-100">
+          {logs.length ? logs.map((log) => log.message).join("\n") : empty}
+        </pre>
+      )}
+
+      {!isDeploymentLogs && (
+        <pre className="max-h-80 overflow-auto bg-black/70 p-4 font-mono text-xs leading-6 text-emerald-100">
+          {runtimeLogs.length
+            ? runtimeLogs.map((log) => log).join("\n")
+            : empty}
+        </pre>
+      )}
     </section>
   );
 }

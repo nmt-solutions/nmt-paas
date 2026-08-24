@@ -1,8 +1,7 @@
 import { Router } from "express";
-import Docker from "dockerode";
 import os from "node:os";
+import { docker } from "../../docker/docker.js";
 
-const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 const adminRouter = Router();
 
 adminRouter.get("/host", async (_req, res) => {
@@ -37,16 +36,14 @@ adminRouter.get("/host", async (_req, res) => {
       errors: null,
     });
   } catch (error) {
-    res
-      .status(503)
-      .send({
-        status: "error",
-        statusCode: 503,
-        message:
-          error instanceof Error ? error.message : "Docker host is unavailable",
-        data: null,
-        errors: null,
-      });
+    res.status(503).send({
+      status: "error",
+      statusCode: 503,
+      message:
+        error instanceof Error ? error.message : "Docker host is unavailable",
+      data: null,
+      errors: null,
+    });
   }
 });
 
@@ -60,18 +57,18 @@ adminRouter.get("/docker/:resource", async (req, res) => {
         : resource === "volumes"
           ? ((await docker.listVolumes()).Volumes ?? [])
           : null;
+
   if (!data) {
-    res
-      .status(404)
-      .send({
-        status: "error",
-        statusCode: 404,
-        message: "Unknown Docker resource",
-        data: null,
-        errors: null,
-      });
+    res.status(404).send({
+      status: "error",
+      statusCode: 404,
+      message: "Unknown Docker resource",
+      data: null,
+      errors: null,
+    });
     return;
   }
+
   res.send({
     status: "success",
     statusCode: 200,
@@ -90,15 +87,13 @@ adminRouter.delete("/docker/:resource/:id", async (req, res) => {
     else if (req.params.resource === "volumes")
       await docker.getVolume(req.params.id).remove();
     else {
-      res
-        .status(404)
-        .send({
-          status: "error",
-          statusCode: 404,
-          message: "Unknown Docker resource",
-          data: null,
-          errors: null,
-        });
+      res.status(404).send({
+        status: "error",
+        statusCode: 404,
+        message: "Unknown Docker resource",
+        data: null,
+        errors: null,
+      });
       return;
     }
     res.send({
@@ -109,18 +104,16 @@ adminRouter.delete("/docker/:resource/:id", async (req, res) => {
       errors: null,
     });
   } catch (error) {
-    res
-      .status(400)
-      .send({
-        status: "error",
-        statusCode: 400,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to delete Docker resource",
-        data: null,
-        errors: null,
-      });
+    res.status(400).send({
+      status: "error",
+      statusCode: 400,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unable to delete Docker resource",
+      data: null,
+      errors: null,
+    });
   }
 });
 

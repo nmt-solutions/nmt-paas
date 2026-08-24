@@ -1,5 +1,5 @@
 import { Router } from "express";
-import queueDeployment from "../../controllers/v1/deployments/queueDeployment.js";
+import queueDeployment from "../../controllers/v1/deployments/queue-deployment.js";
 
 const deploymentsRouter = Router();
 

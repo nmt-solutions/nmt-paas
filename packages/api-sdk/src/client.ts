@@ -63,6 +63,69 @@ export class ControlPanelAPIClient {
     return response.data;
   }
 
+  async streamRuntimeLogs(
+    deploymentId: number,
+    onLog: (log: string) => void,
+    signal?: AbortSignal,
+  ) {
+    const response = await fetch(`/api/v1/logs/stream/${deploymentId}`, {
+      signal,
+      credentials: "include",
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to stream deployment logs: ${response.status}`);
+    }
+
+    if (!response.body) {
+      throw new Error("Deployment log stream is not available.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, {
+        stream: true,
+      });
+
+      const events = buffer.split("\n\n");
+
+      buffer = events.pop() ?? "";
+
+      for (const event of events) {
+        const dataLine = event
+          .split("\n")
+          .find((line) => line.startsWith("data:"));
+
+        if (!dataLine) {
+          continue;
+        }
+
+        const data = dataLine.slice("data:".length).trim();
+
+        if (!data) {
+          continue;
+        }
+
+        try {
+          onLog(JSON.parse(data));
+        } catch {
+          onLog(data);
+        }
+      }
+    }
+  }
+
   async getAdminHost(): Promise<AdminHostResponse> {
     const response = await axios.get(`${this.baseUrl}/admin/host`, {
       headers: this.getHeaders(),

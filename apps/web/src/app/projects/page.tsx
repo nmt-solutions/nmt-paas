@@ -1,16 +1,39 @@
 "use client";
 
-import { ArrowUpRight, Box, PlusCircle } from "lucide-react";
+import {
+  ArrowUpRight,
+  Loader2,
+  MoreVertical,
+  PlusCircle,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import Empty from "@/components/states/empty";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { useTRPC } from "@/trpc/client";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import toast from "@/components/toast/toast";
+import { useState } from "react";
 
 const ProjectsPage = () => {
   const trpc = useTRPC();
-  const { data: projects, isLoading } = useQuery(
-    trpc.project.list.queryOptions(),
+  const {
+    data: projects,
+    isLoading,
+    refetch,
+  } = useQuery(trpc.project.list.queryOptions());
+  const [deletingProjectIds, setDeletingProjectIds] = useState<number[]>([]);
+
+  const { mutate: deleteProject, isPending } = useMutation(
+    trpc.project.deleteProject.mutationOptions(),
   );
 
   return (
@@ -44,7 +67,56 @@ const ProjectsPage = () => {
                   <p className="text-sm text-muted-foreground">Project</p>
                   <h2 className="mt-1 text-xl font-semibold">{project.name}</h2>
                 </div>
-                <Box className="text-primary" />
+                {isPending && deletingProjectIds.includes(project.id) ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Button variant="ghost">
+                        <MoreVertical className="text-primary cursor-pointer" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent className="w-40" align="start">
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Delete Project ${project.name}?`,
+                            );
+
+                            if (confirmed) {
+                              setDeletingProjectIds((prev) => [
+                                ...prev,
+                                project.id,
+                              ]);
+                              deleteProject(
+                                { projectId: project.id },
+                                {
+                                  onSuccess: () => {
+                                    setDeletingProjectIds((prev) =>
+                                      prev.filter((id) => id !== project.id),
+                                    );
+                                    toast({
+                                      title: "Project Deleted",
+                                      description: `${project.name} deleted successfully.`,
+                                      variant: "success",
+                                    });
+                                    refetch();
+                                  },
+                                },
+                              );
+                            }
+                          }}
+                        >
+                          <Trash2 />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </div>
               <div className="mt-6 space-y-2">
                 {project.apps.map((app) => {

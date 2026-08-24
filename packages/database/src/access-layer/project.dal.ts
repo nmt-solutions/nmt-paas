@@ -1,4 +1,4 @@
-import { eq, InferInsertModel } from "drizzle-orm";
+import { and, eq, InferInsertModel } from "drizzle-orm";
 import { database } from "..";
 import { Projects } from "../schema";
 import { UpdateInput } from "../utils/types";
@@ -20,6 +20,7 @@ export const getUserProjects = async (userId: string) => {
         },
       },
     },
+    orderBy: { createdAt: "desc" },
   });
 };
 
@@ -39,4 +40,11 @@ export const updateProject = (
     .update(Projects)
     .set({ ...params, modifiedBy: updatedBy, id: undefined })
     .where(eq(Projects.id, params.id));
+};
+
+export const deleteProject = (projectId: number, userId: string) => {
+  return database
+    .delete(Projects)
+    .where(and(eq(Projects.id, projectId), eq(Projects.createdBy, userId)))
+    .returning();
 };
