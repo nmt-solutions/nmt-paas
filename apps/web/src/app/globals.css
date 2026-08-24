@@ -49,14 +49,14 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.148 0.004 228.8);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.148 0.004 228.8);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.148 0.004 228.8);
-  --primary: oklch(0.508 0.118 165.612);
-  --primary-foreground: oklch(0.979 0.021 166.113);
+  --background: oklch(0.975 0.014 165);
+  --foreground: oklch(0.195 0.025 172);
+  --card: oklch(1 0 0 / 82%);
+  --card-foreground: oklch(0.195 0.025 172);
+  --popover: oklch(1 0 0 / 92%);
+  --popover-foreground: oklch(0.195 0.025 172);
+  --primary: oklch(0.47 0.13 162);
+  --primary-foreground: oklch(0.98 0.015 165);
   --secondary: oklch(0.967 0.001 286.375);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.963 0.002 197.1);
@@ -73,7 +73,7 @@
   --chart-4: oklch(0.378 0.015 216);
   --chart-5: oklch(0.275 0.011 216.9);
   --radius: 0.625rem;
-  --sidebar: oklch(0.987 0.002 197.1);
+  --sidebar: oklch(0.96 0.025 165 / 76%);
   --sidebar-foreground: oklch(0.148 0.004 228.8);
   --sidebar-primary: oklch(0.596 0.145 163.225);
   --sidebar-primary-foreground: oklch(0.979 0.021 166.113);
@@ -83,15 +83,24 @@
   --sidebar-ring: oklch(0.723 0.014 214.4);
 }
 
+@layer components {
+  .glass-panel {
+    @apply rounded-3xl border border-emerald-950/10 bg-white/65 shadow-[0_24px_80px_-40px_oklch(0.25_0.08_165_/_0.45)] backdrop-blur-2xl dark:border-white/10 dark:bg-emerald-950/30;
+  }
+  .glass-row {
+    @apply rounded-xl border border-emerald-950/8 bg-emerald-500/5 transition-colors hover:bg-emerald-500/10 dark:border-white/8;
+  }
+}
+
 .dark {
-  --background: oklch(0.148 0.004 228.8);
-  --foreground: oklch(0.987 0.002 197.1);
-  --card: oklch(0.218 0.008 223.9);
-  --card-foreground: oklch(0.987 0.002 197.1);
-  --popover: oklch(0.218 0.008 223.9);
-  --popover-foreground: oklch(0.987 0.002 197.1);
-  --primary: oklch(0.432 0.095 166.913);
-  --primary-foreground: oklch(0.979 0.021 166.113);
+  --background: oklch(0.17 0.024 170);
+  --foreground: oklch(0.965 0.015 165);
+  --card: oklch(0.23 0.03 170 / 75%);
+  --card-foreground: oklch(0.965 0.015 165);
+  --popover: oklch(0.23 0.03 170 / 94%);
+  --popover-foreground: oklch(0.965 0.015 165);
+  --primary: oklch(0.72 0.15 162);
+  --primary-foreground: oklch(0.2 0.035 170);
   --secondary: oklch(0.274 0.006 286.033);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.275 0.011 216.9);
@@ -107,7 +116,7 @@
   --chart-3: oklch(0.45 0.017 213.2);
   --chart-4: oklch(0.378 0.015 216);
   --chart-5: oklch(0.275 0.011 216.9);
-  --sidebar: oklch(0.218 0.008 223.9);
+  --sidebar: oklch(0.2 0.03 170 / 72%);
   --sidebar-foreground: oklch(0.987 0.002 197.1);
   --sidebar-primary: oklch(0.696 0.17 162.48);
   --sidebar-primary-foreground: oklch(0.262 0.051 172.552);
@@ -123,6 +132,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image: radial-gradient(circle at 8% -10%, color-mix(in oklab, var(--primary) 23%, transparent), transparent 34rem), radial-gradient(circle at 96% 13%, color-mix(in oklab, var(--primary) 13%, transparent), transparent 30rem);
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
@@ -132,3 +142,6 @@
     @apply font-sans;
   }
 }
+
+.landing-shell { background-image: radial-gradient(circle at 4% 72%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 28rem), radial-gradient(circle at 88% 35%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 32rem); }
+.hero-console::before { content: ""; position: absolute; inset: -14%; z-index: -1; border-radius: 999px; background: color-mix(in oklab, var(--primary) 16%, transparent); filter: blur(64px); }

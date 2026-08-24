@@ -1,23 +1,77 @@
-import { PlusCircle } from "lucide-react";
+"use client";
+
+import { ArrowUpRight, Box, PlusCircle } from "lucide-react";
 import Link from "next/link";
-import Search from "@/components/search/search";
 import Empty from "@/components/states/empty";
 import { buttonVariants } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import { useTRPC } from "@/trpc/client";
+import { useQuery } from "@tanstack/react-query";
 
 const ProjectsPage = () => {
+  const trpc = useTRPC();
+  const { data: projects, isLoading } = useQuery(
+    trpc.project.list.queryOptions(),
+  );
+
   return (
-    <div>
-      <div className="flex items-center gap-2">
-        <Search placeholder="Search Projects..." />
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-primary">Workspace</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+            Projects
+          </h1>
+          <p className="mt-2 text-muted-foreground">
+            Your applications, deployments, and production settings.
+          </p>
+        </div>
         <Link className={buttonVariants()} href="/projects/new">
           <PlusCircle /> New Project
         </Link>
       </div>
-      <Separator orientation="horizontal" className="my-8" />
-      <div className="flex items-center justify-center">
-        <Empty title="No Projects Found" />
-      </div>
+      {isLoading ? (
+        <p className="text-muted-foreground">Loading projects…</p>
+      ) : !projects?.length ? (
+        <div className="glass-panel flex min-h-72 items-center justify-center">
+          <Empty title="No Projects Found" />
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {projects.map((project) => (
+            <section key={project.id} className="glass-panel p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm text-muted-foreground">Project</p>
+                  <h2 className="mt-1 text-xl font-semibold">{project.name}</h2>
+                </div>
+                <Box className="text-primary" />
+              </div>
+              <div className="mt-6 space-y-2">
+                {project.apps.map((app) => {
+                  const latest = [...app.deployments].sort(
+                    (a, b) => b.id - a.id,
+                  )[0];
+                  return (
+                    <Link
+                      key={app.id}
+                      href={`/projects/${project.id}/apps/${app.id}`}
+                      className="glass-row group flex items-center justify-between px-3 py-3"
+                    >
+                      <div>
+                        <p className="font-medium">{app.appName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {latest?.status ?? "Not deployed"}
+                        </p>
+                      </div>
+                      <ArrowUpRight className="size-4 text-muted-foreground transition group-hover:text-primary" />
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

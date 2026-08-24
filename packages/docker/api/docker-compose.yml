@@ -14,6 +14,9 @@ services:
       API_APP_PORT: ${API_APP_PORT}
       API_KEY: ${API_KEY}
 
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
     networks:
       - app-network
 

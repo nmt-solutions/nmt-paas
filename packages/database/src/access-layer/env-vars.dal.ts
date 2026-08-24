@@ -1,4 +1,4 @@
-import { InferInsertModel } from "drizzle-orm";
+import { eq, InferInsertModel } from "drizzle-orm";
 import { database } from "..";
 import { AppEnv, EnvVars } from "../schema";
 
@@ -20,3 +20,21 @@ export const getEnvVars = async (
     },
   });
 };
+
+export const getEnvVarKeys = async (projectId: number) =>
+  database.query.EnvVars.findMany({
+    where: { projectId, resourceStatus: "active" },
+    columns: {
+      id: true,
+      key: true,
+      env: true,
+      createdAt: true,
+      modifiedAt: true,
+    },
+  });
+
+export const deactivateEnvVar = async (id: number, updatedBy: string) =>
+  database
+    .update(EnvVars)
+    .set({ resourceStatus: "inactive", modifiedBy: updatedBy })
+    .where(eq(EnvVars.id, id));

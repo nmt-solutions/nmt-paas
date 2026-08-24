@@ -12,6 +12,14 @@ export const getProject = async (projectId: number) => {
 export const getUserProjects = async (userId: string) => {
   return database.query.Projects.findMany({
     where: { userId, resourceStatus: "active" },
+    with: {
+      apps: {
+        with: {
+          appDomains: true,
+          deployments: true,
+        },
+      },
+    },
   });
 };
 

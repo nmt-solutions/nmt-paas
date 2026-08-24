@@ -60,7 +60,7 @@ export const deploymentRouter = createTRPCRouter({
       const userId = ctx.userInfo.user.id;
       const { repoId, repo, owner, branch, envVars, frameworkConfig } = input;
 
-      const app = await getAppByRepoId(repoId);
+      const app = await getAppByRepoId(repoId, userId);
 
       if (!app) {
         if (!frameworkConfig) {
