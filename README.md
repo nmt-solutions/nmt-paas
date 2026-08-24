@@ -1,159 +1,153 @@
-# Turborepo starter
+# NMT Deploy
 
-This Turborepo starter is maintained by the Turborepo core team.
+NMT Deploy is a self-hosted PaaS for deploying GitHub repositories to Docker. It provides a GitHub-connected deployment workflow, automatic framework configuration, production domains, encrypted environment variables, and live build/runtime logs.
 
-## Using this example
+## Features
 
-Run the following command:
+- GitHub App repository import with WorkOS authentication.
+- Framework-aware defaults for Next.js, React, Vite, Node.js, Docker, and other projects.
+- Background deployments using BullMQ, Redis, and Docker.
+- Traefik routing with generated production domains and optional Cloudflare Tunnel exposure.
+- Deployment history with status, branch, commit, timestamp, and log viewing.
+- Live deployment-log refresh, streamed runtime logs, fullscreen logs, and redeploy actions.
+- Encrypted application environment variables and clear redeploy prompts after configuration changes.
 
-```sh
-npx create-turbo@latest
+## Architecture
+
+```text
+Browser (Next.js / apps/web)
+        │ tRPC + authenticated API routes
+        ▼
+PostgreSQL ◀── API service (apps/api) ──▶ Redis / BullMQ
+   ▲                                            │
+   │                                            ▼
+   └──────── worker (apps/worker) ──▶ Docker ──▶ Traefik ──▶ deployed app
 ```
 
-## What's inside?
+| Area | Location | Responsibility |
+| --- | --- | --- |
+| Web | `apps/web` | Next.js workspace, authentication, tRPC, app management, and logs |
+| API | `apps/api` | Authenticated control-plane endpoints and deployment queueing |
+| Worker | `apps/worker` | Repository cloning, Docker builds, deployment lifecycle, and log persistence |
+| Database | `packages/database` | Drizzle schema, migrations, and data-access layer |
+| Queue | `packages/queues` | BullMQ deployment queue |
+| Docker operations | `packages/docker` | Compose definitions for Redis, worker, API, Traefik, and Cloudflare |
 
-This Turborepo includes the following packages/apps:
+## Prerequisites
 
-### Apps and Packages
+- Node.js 18+ and npm 11+
+- Docker Engine with Docker Compose v2
+- PostgreSQL database (Neon PostgreSQL is supported)
+- Redis
+- A GitHub App installation with repository read access
+- WorkOS credentials
 
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
+## Setup
 
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
+1. Install dependencies.
 
-### Utilities
+   ```sh
+   npm install
+   ```
 
-This Turborepo has some additional tools already setup for you:
+2. Create a root `.env` file. The Docker setup command copies it into the workspaces before starting services. Do not commit it.
 
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
+3. Configure the required variables.
 
-### Build
+   | Variable | Purpose |
+   | --- | --- |
+   | `APP_ENV` | `development` or `production` |
+   | `DB_ENV` | Selects `DEV_DATABASE_URL` or `PROD_DATABASE_URL` |
+   | `DEV_DATABASE_URL` / `PROD_DATABASE_URL` | PostgreSQL connection strings |
+   | `BASE_DOMAIN` | Base domain for generated application domains |
+   | `ENV_ENCRYPTION_KEY` | Encrypts application environment values |
+   | `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, `WORKOS_COOKIE_PASSWORD` | WorkOS authentication |
+   | `NEXT_PUBLIC_WORKOS_REDIRECT_URI` | WorkOS callback URL |
+   | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` | GitHub App credentials |
+   | `GITHUB_PAT`, `GITHUB_USER_NAME` | Container-registry publishing credentials |
+   | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | Redis connection |
+   | `API_APP_PORT`, `API_KEY` | Control-plane API configuration |
+   | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare Tunnel token, when used |
 
-To build all apps and packages, run the following command:
+4. Apply migrations.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+   ```sh
+   npm run db-mig --workspace=@repo/database
+   ```
 
-```sh
-cd my-turborepo
-turbo build
-```
+5. Start the web app locally.
 
-Without global `turbo`, use your package manager:
+   ```sh
+   npm run dev --workspace=web
+   ```
 
-```sh
-cd my-turborepo
-npx turbo build
-pnpm dlx turbo build
-pnpm exec turbo build
-```
+6. Start the control-plane services.
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+   ```sh
+   npm run docker -- setup
+   ```
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+   This starts Traefik, Redis, the worker, API, and Cloudflare Tunnel, creating `app-network` when necessary.
 
-```sh
-turbo build --filter=docs
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
-
-### Develop
-
-To develop all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo dev
-```
-
-Without global `turbo`, use your package manager:
+## Common commands
 
 ```sh
-cd my-turborepo
-npx turbo dev
-pnpm exec turbo dev
-pnpm exec turbo dev
+# Start all workspace development processes
+npm run dev
+
+# Build, lint, or type-check every workspace
+npm run build
+npm run lint
+npm run check-types
+
+# Generate or apply database migrations
+npm run db-gen --workspace=@repo/database
+npm run db-mig --workspace=@repo/database
+
+# Run a Docker Compose command for every stack service
+npm run docker -- ps
+npm run docker -- down
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+## Deployment workflow
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+1. Sign in and connect the GitHub App installation.
+2. Create a project and choose a repository and branch.
+3. Review the detected framework preset; override build settings only when required.
+4. Add production environment variables.
+5. Deploy. The application opens the app details page and follows the new deployment logs.
+6. Use the **Deployments** tab for previous releases. Select a release to open its logs; fullscreen logs are available from the log panel.
+7. Use **Redeploy** to queue the same branch again. Saved environment or build changes require a new deployment, and the UI presents a **Redeploy now** action.
+
+## Docker services
+
+Compose definitions live in `packages/docker`:
+
+- `traefik` — routes HTTP traffic to deployment containers.
+- `redis` — BullMQ backing store with a persistent `redis-data` volume.
+- `worker` — runs builds and deployments; requires Docker socket access.
+- `api` — provides queue and runtime-log endpoints; requires Docker socket access.
+- `cloudflare` — optional public tunnel.
+
+## Destructive full reset
+
+`npm run reset -- --force` is a destructive recovery command. It drops the selected database’s `public` schema, reapplies Drizzle migrations, then removes **all** Docker containers, images, volumes, custom networks, and build cache from the current Docker host.
 
 ```sh
-turbo dev --filter=web
+npm run reset -- --force
 ```
 
-Without global `turbo`:
+It targets `DEV_DATABASE_URL` when `DB_ENV=development`. Production resets are blocked unless `ALLOW_PRODUCTION_RESET=true` is set explicitly. Run this only against a dedicated database and Docker host.
+
+## Security and release checklist
+
+- Never commit `.env` files, database URLs, API keys, GitHub keys, tokens, or `ENV_ENCRYPTION_KEY`.
+- Protect the Docker socket and `API_KEY`; both can control deployment containers.
+- Scope the GitHub App to the repositories the workspace should deploy.
+- Verify the WorkOS callback URL, GitHub App callback, `BASE_DOMAIN`, database environment, and Cloudflare configuration before release.
 
 ```sh
-npx turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+npm run lint
+npm run check-types
+npm run build
 ```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-pnpm exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-pnpm exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
