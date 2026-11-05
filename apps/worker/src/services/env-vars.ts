@@ -1,6 +1,7 @@
 import { getEnvVars } from "@repo/database/access-layer/env-vars.dal";
 import env from "../env/vars.js";
 import crypto from "crypto";
+import { registerDiagnosticSecrets } from "./diagnostics.js";
 
 const ALGORITHM = "aes-256-gcm";
 // const IV_LENGTH = 12; // Recommended for GCM
@@ -51,6 +52,10 @@ export const fetchEnvVars = async (
   const envVars = await getEnvVars(projectId, env);
 
   return envVars
-    .map((envVar) => `${envVar.key}=${decrypt(envVar.encryptedValue)}`)
+    .map((envVar) => {
+      const value = decrypt(envVar.encryptedValue);
+      registerDiagnosticSecrets(value);
+      return `${envVar.key}=${value}`;
+    })
     .join("\n");
 };
