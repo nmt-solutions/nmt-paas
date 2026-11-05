@@ -2,6 +2,7 @@ import { and, eq, InferInsertModel } from "drizzle-orm";
 import { database } from "..";
 import { Projects } from "../schema";
 import { UpdateInput } from "../utils/types";
+import { activeAppEligibility } from "./app-eligibility";
 
 export const getProject = async (projectId: number) => {
   return database.query.Projects.findFirst({
@@ -14,6 +15,7 @@ export const getUserProjects = async (userId: string) => {
     where: { userId, resourceStatus: "active" },
     with: {
       apps: {
+        where: activeAppEligibility(userId),
         with: {
           appDomains: true,
           deployments: true,
