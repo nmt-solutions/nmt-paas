@@ -5,6 +5,7 @@ import process from "node:process";
 import test from "node:test";
 import { URL } from "node:url";
 import pg from "pg";
+import { readHistoryLogs } from "./history.mjs";
 import { createDeploymentExecutor } from "../src/deployment/execute-deployment.ts";
 import { createDockerCommandAdapter } from "../src/deployment/docker-command-adapter.ts";
 import {
@@ -202,7 +203,7 @@ test(
           (item) => item.id === deploymentId,
         );
         assert.equal(attempt.status, "failed");
-        const messages = attempt.deploymentLogs
+        const messages = (await readHistoryLogs(7, deploymentId, userId))
           .map((log) => log.message)
           .join("\n");
         assert.match(messages, scenario.failure);

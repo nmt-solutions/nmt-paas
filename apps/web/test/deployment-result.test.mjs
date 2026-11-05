@@ -153,7 +153,7 @@ test(
       deploymentId,
     );
     assert.ok(
-      app.deployments[0].deploymentLogs.some(
+      (await caller.deploymentLogs({ appId: 7, deploymentId })).logs.some(
         (log) =>
           log.message ===
           "Container started for fixture-app at fixture.invalid. Application readiness has not been checked.",
@@ -192,6 +192,8 @@ test(
     const { QueryClient, QueryClientProvider } =
       await import("@tanstack/react-query");
     const { createTRPCClient, httpLink } = await import("@trpc/client");
+    const { fetchRequestHandler } = await import("@trpc/server/adapters/fetch");
+    const { createTRPCRouter } = await import("../src/trpc/init.ts");
     const { createTRPCOptionsProxy } =
       await import("@trpc/tanstack-react-query");
     const { default: superjson } = await import("superjson");
@@ -210,6 +212,15 @@ test(
         httpLink({
           url: "http://127.0.0.1:1/api/trpc",
           transformer: superjson,
+          fetch: (input, init) =>
+            fetchRequestHandler({
+              endpoint: "/api/trpc",
+              req: new Request(input, init),
+              router: createTRPCRouter({ app: appRouter }),
+              createContext: async () => ({
+                userInfo: { user: { id: userId } },
+              }),
+            }),
         }),
       ],
     });
@@ -257,6 +268,19 @@ test(
         ),
       );
     await renderPage(h(AppDetails, { appId: 7 }));
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (
+        dom.window.document
+          .querySelector("pre")
+          ?.textContent.includes("Container started for fixture-app")
+      )
+        break;
+      await act(() => setTimeout(20));
+    }
+    assert.match(
+      dom.window.document.querySelector("pre").textContent,
+      /Container started for fixture-app at fixture.invalid\. Application readiness has not been checked\./,
+    );
     const overview = dom.window.document.body.textContent;
     assert.match(overview, /Image publication/);
     assert.match(overview, /Publication is separate from container start/);

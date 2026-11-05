@@ -160,6 +160,13 @@ test(
     assert.equal(app.deployments[0].status, "success");
     assert.equal(app.deployments[0].cleanup.status, "pending");
     assert.doesNotMatch(JSON.stringify(app), /fixture-pat/);
+    const initialHistory = await caller.deploymentLogs({
+      appId: 7,
+      deploymentId,
+    });
+    assert.equal(initialHistory.hasMore, false);
+    assert.ok(initialHistory.logs.every((log) => !log.truncated));
+    assert.doesNotMatch(JSON.stringify(initialHistory), /fixture-pat/);
     await assert.rejects(
       appRouter.createCaller({ userInfo: null }).get({ appId: 7 }),
       { code: "UNAUTHORIZED" },
@@ -175,7 +182,7 @@ test(
       deploymentId,
     );
     assert.ok(
-      app.deployments[0].deploymentLogs.some(
+      initialHistory.logs.some(
         (log) =>
           log.message ===
           "Container started for fixture-app at fixture.invalid. Application readiness has not been checked.",
@@ -214,6 +221,8 @@ test(
     const { QueryClient, QueryClientProvider } =
       await import("@tanstack/react-query");
     const { createTRPCClient, httpLink } = await import("@trpc/client");
+    const { fetchRequestHandler } = await import("@trpc/server/adapters/fetch");
+    const { createTRPCRouter } = await import("../src/trpc/init.ts");
     const { createTRPCOptionsProxy } =
       await import("@trpc/tanstack-react-query");
     const { default: superjson } = await import("superjson");
@@ -232,6 +241,18 @@ test(
         httpLink({
           url: "http://127.0.0.1:1/api/trpc",
           transformer: superjson,
+          fetch: (input, init) =>
+            fetchRequestHandler({
+              endpoint: "/api/trpc",
+              req: new Request(input, init),
+              router: createTRPCRouter({
+                app: appRouter,
+                deployment: deploymentRouter,
+              }),
+              createContext: async () => ({
+                userInfo: { user: { id: userId } },
+              }),
+            }),
         }),
       ],
     });
@@ -344,6 +365,16 @@ test(
     );
     assert.doesNotMatch(JSON.stringify(reloaded), /Failed query:|params:/);
     assert.doesNotMatch(JSON.stringify(reloaded), /fixture-pat/);
+    const recoveryHistory = await caller.deploymentLogs({
+      appId: 7,
+      deploymentId,
+    });
+    assert.equal(recoveryHistory.hasMore, false);
+    assert.ok(recoveryHistory.logs.every((log) => !log.truncated));
+    assert.doesNotMatch(
+      JSON.stringify(recoveryHistory),
+      /Failed query:|params:|fixture-pat/,
+    );
     await connection.query(
       'DROP TRIGGER cleanup_acknowledgement ON "Deployments"; DROP FUNCTION reject_cleanup_completion()',
     );
@@ -416,6 +447,24 @@ test(
     const refreshed = await caller.get({ appId: 7 });
     assert.equal(refreshed.deployments[0].status, "success");
     assert.equal(refreshed.deployments[0].cleanup.status, "complete");
+    const finalHistory = await caller.deploymentLogs({
+      appId: 7,
+      deploymentId,
+    });
+    assert.equal(finalHistory.hasMore, false);
+    assert.ok(finalHistory.logs.every((log) => !log.truncated));
+    assert.deepEqual(
+      finalHistory.logs.slice(0, recoveryHistory.logs.length),
+      recoveryHistory.logs,
+    );
+    assert.match(
+      finalHistory.logs.at(-1).message,
+      /Cleanup complete. Runtime-start outcome unchanged/,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(finalHistory),
+      /Failed query:|params:|fixture-pat/,
+    );
     await act(() =>
       queryClient.setQueryData(trpc.app.get.queryKey({ appId: 7 }), refreshed),
     );

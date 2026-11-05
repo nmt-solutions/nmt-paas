@@ -40,7 +40,6 @@ export const getUserApp = async (appId: number, userId: string) =>
       appDomains: true,
       frameworkConfig: true,
       deployments: {
-        with: { deploymentLogs: true },
         orderBy: { createdAt: "desc" },
       },
     },

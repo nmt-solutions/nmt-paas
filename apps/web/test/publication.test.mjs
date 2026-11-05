@@ -315,6 +315,20 @@ test(
       JSON.stringify(view),
       /fixture-registry-token|fixture-clone-token/,
     );
+    const { appRouter } = await import("../src/trpc/routers/app.trpc.ts");
+    const appOwner = appRouter.createCaller({
+      userInfo: { user: { id: userId } },
+    });
+    const history = await appOwner.deploymentLogs({ appId: 7, deploymentId });
+    assert.equal(history.hasMore, false);
+    assert.ok(history.logs.every((log) => !log.truncated));
+    assert.doesNotMatch(
+      JSON.stringify(history),
+      /fixture-registry-token|fixture-clone-token/,
+    );
+    assert.ok(
+      history.logs.some((log) => log.message.includes("Container started")),
+    );
     for (const action of ["publication", "retryPublication"]) {
       await assert.rejects(caller(null)[action]({ deploymentId }), {
         code: "UNAUTHORIZED",
@@ -392,5 +406,10 @@ test(
       queued: false,
     });
     assert.deepEqual(workerErrors, []);
+    assert.deepEqual(
+      await appOwner.deploymentLogs({ appId: 7, deploymentId }),
+      history,
+      "Publication-only recovery must not alter persisted deployment history",
+    );
   },
 );
