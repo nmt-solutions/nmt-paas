@@ -172,3 +172,78 @@ test(
     );
   },
 );
+
+test("a subdirectory app installs, builds and starts the recorded revision instead of the branch head", async (t) => {
+  const fixture = await deploymentFixture({
+    source: {
+      rootDirectory: "/app/services/api",
+      head: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      commits: {
+        "1234567890abcdef1234567890abcdef12345678": "recorded-release",
+        eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: "newer-branch-head",
+      },
+    },
+  });
+  t.after(fixture.close);
+  const deployment = await fixture.database.getDeployment(deploymentId);
+  assert.ok(deployment);
+  deployment.app.frameworkConfig.rootDirectory = "./services/api";
+
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  const runtime = await fixture.docker.getContainer("deployment-42").inspect();
+  assert.equal(runtime.State.Running, true);
+  assert.equal(runtime.Config.WorkingDir, "/app/services/api");
+  assert.equal(
+    fixture.images.get("ghcr.io/fixture/42:42")?.artifact,
+    "recorded-release",
+  );
+  const output = await fixture.docker
+    .getContainer("deployment-42")
+    .logs({ stdout: true, stderr: true });
+  assert.match(output.toString(), /recorded-release/);
+  assert.ok(!output.toString().includes("newer-branch-head"));
+});
+
+test("an unavailable recorded commit fails checkout and preserves the previous runtime", async (t) => {
+  const fixture = await deploymentFixture({
+    source: {
+      rootDirectory: "/app",
+      head: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      commits: { eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: "branch-head" },
+    },
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Checkout commit failed \(exit code 128\)/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(logs, /recorded commit is not available/);
+  assert.ok(!logs.includes("Installing project dependencies"));
+  assert.equal(fixture.images.size, 0);
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});

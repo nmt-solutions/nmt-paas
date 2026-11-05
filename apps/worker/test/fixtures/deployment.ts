@@ -11,7 +11,16 @@ export const userId = "fixture-owner";
 // A disposable Docker HTTP fixture, not evidence of daemon compatibility.
 export async function deploymentFixture({
   failCommand,
-}: { failCommand?: string } = {}) {
+  source,
+}: {
+  failCommand?: string;
+  source?: {
+    rootDirectory: string;
+    head: string;
+    commits: Record<string, string>;
+    cloneUrl?: string;
+  };
+} = {}) {
   const containers = new Map([
     [
       "previous",
@@ -33,8 +42,14 @@ export async function deploymentFixture({
     ],
   ]);
   const configurations = new Map<string, Docker.ContainerCreateOptions>();
-  const images = new Map<string, { changes: string[] }>();
-  const execs = new Map<string, { command: string[]; exitCode: number }>();
+  const images = new Map<string, { changes: string[]; artifact?: string }>();
+  const execs = new Map<
+    string,
+    { command: string[]; exitCode: number; output?: string }
+  >();
+  let revision: string | undefined;
+  let installed = false;
+  let artifact: string | undefined;
   const sockets = new Set<Socket>();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url!, "http://fixture");
@@ -48,6 +63,12 @@ export async function deploymentFixture({
 
     if (url.pathname === "/containers/create") {
       const name = url.searchParams.get("name")!;
+      const image = images.get(body.Image);
+      if (image) {
+        body.WorkingDir ??= image.changes
+          .find((change) => change.startsWith("WORKDIR "))
+          ?.slice(8);
+      }
       containers.set(name, {
         Id: name,
         Names: [`/${name}`],
@@ -67,9 +88,50 @@ export async function deploymentFixture({
     const execMatch = url.pathname.match(/^\/containers\/([^/]+)\/exec$/);
     if (execMatch) {
       const id = `exec-${execs.size}`;
+      const command = body.Cmd[0] === "sh" ? body.Cmd[2] : body.Cmd.join(" ");
+      let exitCode = body.Cmd[2] === failCommand ? 1 : 0;
+      let output: string | undefined;
+      if (source) {
+        const workDir =
+          body.WorkingDir || configurations.get(execMatch[1]!)?.WorkingDir;
+        if (command.startsWith("git clone ")) {
+          const cloneUrl = new URL(
+            command.slice("git clone ".length).split(" ")[0],
+          );
+          cloneUrl.username = "";
+          cloneUrl.password = "";
+          if (!source.cloneUrl || cloneUrl.href === source.cloneUrl)
+            revision = source.head;
+          else {
+            exitCode = 128;
+            output = "fatal: repository not found";
+          }
+        } else if (command.startsWith("git checkout --detach ")) {
+          const target = command.slice("git checkout --detach ".length);
+          if (source.commits[target]) revision = target;
+          else {
+            exitCode = 128;
+            output = "fatal: recorded commit is not available";
+          }
+        } else if (command === "npm ci") {
+          if (workDir === source.rootDirectory && revision) installed = true;
+          else {
+            exitCode = 1;
+            output = "package.json not found in working directory";
+          }
+        } else if (command === "npm run build") {
+          if (workDir === source.rootDirectory && installed && revision)
+            artifact = source.commits[revision];
+          else {
+            exitCode = 1;
+            output = "build dependencies not found in working directory";
+          }
+        }
+      }
       execs.set(id, {
         command: body.Cmd,
-        exitCode: body.Cmd[2] === failCommand ? 1 : 0,
+        exitCode,
+        output,
       });
       return send(201, { Id: id });
     }
@@ -78,7 +140,10 @@ export async function deploymentFixture({
       return send(200, { ExitCode: execs.get(inspectExec[1]!)?.exitCode });
     if (url.pathname === "/commit") {
       const name = `${url.searchParams.get("repo")}:${url.searchParams.get("tag")}`;
-      images.set(name, { changes: url.searchParams.getAll("changes") });
+      images.set(name, {
+        changes: url.searchParams.getAll("changes"),
+        artifact,
+      });
       return send(201, { Id: "fixture-image" });
     }
     if (url.pathname.startsWith("/images/") && url.pathname.endsWith("/push")) {
@@ -98,6 +163,17 @@ export async function deploymentFixture({
         return send(204);
       }
       if (match[2] === "start") {
+        const config = configurations.get(id);
+        if (source && !id.startsWith("builder-")) {
+          if (
+            config?.WorkingDir !== source.rootDirectory ||
+            !images.get(config.Image!)?.artifact
+          ) {
+            return send(400, {
+              message: `Application artifact not found in ${config?.WorkingDir}`,
+            });
+          }
+        }
         container.State = "running";
         return send(204);
       }
@@ -111,7 +187,15 @@ export async function deploymentFixture({
         response.writeHead(200, {
           "Content-Type": "application/vnd.docker.raw-stream",
         });
-        response.end();
+        const config = configurations.get(id);
+        const output = config ? images.get(config.Image!)?.artifact : undefined;
+        if (output) {
+          const payload = Buffer.from(`${output}\n`);
+          const header = Buffer.alloc(8);
+          header[0] = 1;
+          header.writeUInt32BE(payload.length, 4);
+          response.end(Buffer.concat([header, payload]));
+        } else response.end();
         return;
       }
     }
@@ -133,7 +217,7 @@ export async function deploymentFixture({
     socket.write(
       "HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
     );
-    socket.end(`fixture output: ${exec.command[2]}\n`);
+    socket.end(`${exec.output ?? `fixture output: ${exec.command[2]}`}\n`);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
