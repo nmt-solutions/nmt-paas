@@ -80,6 +80,8 @@ type DeploymentContainer = {
 /**
  * Construct once per worker process to share its app locks.
  * No production adapters are loaded or opened by this module.
+ * A successful execution confirms container start, without an application
+ * readiness check. Publication and cleanup continue in the background.
  */
 export const createDeploymentExecutor = ({
   getDeployment,
@@ -791,7 +793,8 @@ export const createDeploymentExecutor = ({
         console.log(`Deployment container ${deploymentId} started.`);
 
         /*
-         * The application is now available to Traefik.
+         * Docker accepted the container start. Application readiness
+         * and continued availability have not been checked.
          *
          * Mark success immediately. Everything after this point
          * is cleanup/background work.
@@ -804,13 +807,14 @@ export const createDeploymentExecutor = ({
           userId,
         );
 
+        const startMessage = `Container started for ${appName} at ${appDomain}. Application readiness has not been checked.`;
         await createDeploymentLogs({
           deploymentId,
-          message: `${appName} deployed successfully at ${appDomain}.`,
+          message: startMessage,
           createdBy: userId,
         });
 
-        console.log(`${appName} deployed successfully at ${appDomain}.`);
+        console.log(startMessage);
 
         /*
          * Start background work.

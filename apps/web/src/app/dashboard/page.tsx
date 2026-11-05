@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
+import { deploymentStatusLabel } from "@/utils/deployment-status";
 
 export default function Dashboard() {
   const trpc = useTRPC();
@@ -28,7 +29,7 @@ export default function Dashboard() {
       })),
     ) ?? [];
   const deployments = apps.flatMap((app) => app.deployments);
-  const healthy = deployments.filter(
+  const containerStarts = deployments.filter(
     (deployment) => deployment.status === "success",
   ).length;
   return (
@@ -40,7 +41,8 @@ export default function Dashboard() {
             Good {greeting()}, deployer.
           </h1>
           <p className="mt-2 text-muted-foreground">
-            A calm view of what is running across your workspace.
+            Deployment history across your workspace. Application readiness has
+            not been checked.
           </p>
         </div>
         <Button asChild>
@@ -59,9 +61,9 @@ export default function Dashboard() {
         />
         <Metric
           icon={<CircleCheck />}
-          label="Healthy releases"
-          value={String(healthy)}
-          helper="currently successful"
+          label="Container starts"
+          value={String(containerStarts)}
+          helper="recorded across deployment history"
         />
         <Metric
           icon={<GitCommitHorizontal />}
@@ -71,13 +73,13 @@ export default function Dashboard() {
         />
         <Metric
           icon={<Activity />}
-          label="Availability"
+          label="Container start rate"
           value={
             deployments.length
-              ? `${Math.round((healthy / deployments.length) * 100)}%`
+              ? `${Math.round((containerStarts / deployments.length) * 100)}%`
               : "—"
           }
-          helper="successful deploys"
+          helper="of recorded deployments"
         />
       </section>
       <section className="grid gap-6 xl:grid-cols-[1.4fr_.6fr]">
@@ -86,7 +88,7 @@ export default function Dashboard() {
             <div>
               <h2 className="font-semibold">Your applications</h2>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                The latest production state for each app.
+                The latest deployment result for each app.
               </p>
             </div>
             <Link className="text-sm font-medium text-primary" href="/projects">
@@ -120,7 +122,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <span className="hidden rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 sm:block dark:text-emerald-300">
-                      {latest?.status ?? "idle"}
+                      {deploymentStatusLabel(latest?.status ?? "idle")}
                     </span>
                     <ArrowRight className="size-4 text-muted-foreground transition group-hover:text-primary" />
                   </Link>

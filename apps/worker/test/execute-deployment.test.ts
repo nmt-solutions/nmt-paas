@@ -63,7 +63,7 @@ test("a production deployment starts its image and replaces only its previous ru
   assert.match(logText, /fixture output: npm run build/);
   assert.equal(
     (await fixture.database.getLogs(deploymentId)).at(-1)?.message,
-    "fixture-app deployed successfully at fixture.invalid.",
+    "Container started for fixture-app at fixture.invalid. Application readiness has not been checked.",
   );
 
   // Cleanup is deliberately background work in the existing success policy.
