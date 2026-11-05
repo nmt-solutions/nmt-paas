@@ -1,5 +1,7 @@
 import process from "node:process";
-import { projectRouter } from "../../../../apps/web/src/trpc/routers/project.trpc.ts";
+import "../../../../apps/web/tests/server-only.mjs";
+const { projectRouter } =
+  await import("../../../../apps/web/src/trpc/routers/project.trpc.ts");
 
 const caller = projectRouter.createCaller({
   userInfo: { user: { id: "database-selection-owner" } },

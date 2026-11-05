@@ -1,4 +1,4 @@
-import { and, eq, InferInsertModel } from "drizzle-orm";
+import { eq, InferInsertModel } from "drizzle-orm";
 import { database } from "..";
 import { Projects } from "../schema";
 import { UpdateInput } from "../utils/types";
@@ -42,12 +42,4 @@ export const updateProject = (
     .update(Projects)
     .set({ ...params, modifiedBy: updatedBy, id: undefined })
     .where(eq(Projects.id, params.id));
-};
-
-export const deleteProject = (projectId: number, userId: string) => {
-  return database
-    .update(Projects)
-    .set({ resourceStatus: "inactive" })
-    .where(and(eq(Projects.id, projectId), eq(Projects.createdBy, userId)))
-    .returning();
 };

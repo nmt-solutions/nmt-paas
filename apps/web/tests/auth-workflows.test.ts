@@ -429,10 +429,9 @@ test("app and project requests preserve a foreign owner's resources", async () =
     bob.app.addEnvVar({ appId: app.id, key: "PRIVATE", value: "fixture" }),
     { code: "NOT_FOUND" },
   );
-  assert.deepEqual(
-    await bob.project.deleteProject({ projectId: project.id }),
-    [],
-  );
+  await assert.rejects(bob.project.deleteProject({ projectId: project.id }), {
+    code: "NOT_FOUND",
+  });
   assert.equal((await alice.app.get({ appId: app.id })).appName, "Private app");
   assert.equal((await alice.project.list())[0]?.name, "Private project");
 });

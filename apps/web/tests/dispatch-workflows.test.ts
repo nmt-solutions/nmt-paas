@@ -684,6 +684,143 @@ test(
       await retirement;
       if (startup) await stop(startup);
     }
+
+    // A project holds its first child turn while waiting for the second. A
+    // fresh dispatcher must wait behind that complete visibility lock set.
+    const projectOwner = await owner("project-retired-pending-owner");
+    hostMode = "unavailable";
+    const requests = [
+      { ...input, repoId: 12346, submissionId: randomUUID() },
+      { ...input, repoId: 12347, submissionId: randomUUID() },
+    ];
+    const admissions = [];
+    for (const request of requests) {
+      const admission = await projectOwner.deployment.deploy(request);
+      assert.equal(admission.outcome, "uncertain");
+      admissions.push(admission);
+    }
+    const [first, second] = admissions;
+    assert.ok(first && second);
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      first.projectId,
+      second.appId,
+    ]);
+    await delay(5_100);
+    const projectBlocker = new Client({
+      connectionString: process.env.IMPORT_TEST_DATABASE_URL,
+    });
+    await projectBlocker.connect();
+    await projectBlocker.query("SELECT pg_advisory_lock(2121, $1)", [
+      second.appId,
+    ]);
+    const projectRetirement = projectOwner.project.deleteProject({
+      projectId: first.projectId,
+    });
+    void projectRetirement.catch(() => undefined);
+    let projectStartup: ChildProcess | undefined;
+    const projectWaiters = async (appId: number) =>
+      Number(
+        (
+          await fixtures.query(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND classid = 2121 AND objid = $1 AND NOT granted",
+            [appId],
+          )
+        ).rows[0].count,
+      );
+    try {
+      await until(
+        async () => (await projectWaiters(second.appId)) === 1,
+        "Project retirement did not wait for the second child",
+      );
+      assert.equal(
+        (await projectOwner.app.get({ appId: first.appId })).resourceStatus,
+        "active",
+      );
+      assert.equal(
+        (await projectOwner.app.get({ appId: second.appId })).resourceStatus,
+        "active",
+      );
+      hostMode = "available";
+      const beforeProjectDispatch = hostRequests;
+      projectStartup = await startRecovery();
+      await until(
+        async () =>
+          (await projectWaiters(first.appId)) === 1 &&
+          (await projectWaiters(second.appId)) === 2,
+        "Dispatch recovery did not wait behind every project child turn",
+      );
+      for (const admission of admissions) {
+        const status = await projectOwner.deployment.submission({
+          submissionId: admission.submissionId,
+        });
+        assert.equal(status?.deploymentId, admission.deploymentId);
+        assert.equal(status?.outcome, "uncertain");
+        assert.ok(
+          status?.nextAttemptAt,
+          "Committed dispatch lease stays visible",
+        );
+      }
+      await projectBlocker.query("SELECT pg_advisory_unlock(2121, $1)", [
+        second.appId,
+      ]);
+      assert.equal((await projectRetirement).retirement?.status, "complete");
+      await until(
+        async () =>
+          (await projectWaiters(first.appId)) === 0 &&
+          (await projectWaiters(second.appId)) === 0,
+        "Project dispatch recovery did not finish",
+      );
+      assert.equal(hostRequests, beforeProjectDispatch);
+      const retainedJobs = await queue.getJobs();
+      for (const admission of admissions) {
+        assert.equal(
+          retainedJobs.some(
+            (job) => job.data.deploymentId === admission.deploymentId,
+          ),
+          false,
+        );
+        assert.equal(
+          received.filter(
+            ({ deploymentId }) => deploymentId === admission.deploymentId,
+          ).length,
+          0,
+        );
+        assert.equal(
+          await projectOwner.deployment.submission({
+            submissionId: admission.submissionId,
+          }),
+          null,
+        );
+        await assert.rejects(
+          projectOwner.deployment.dispatches({ appId: admission.appId }),
+          { code: "NOT_FOUND" },
+        );
+        await assert.rejects(
+          projectOwner.app.redeploy({
+            appId: admission.appId,
+            submissionId: randomUUID(),
+          }),
+          { code: "NOT_FOUND" },
+        );
+      }
+      for (const request of requests)
+        await assert.rejects(projectOwner.deployment.deploy(request), {
+          code: "NOT_FOUND",
+        });
+      assert.equal(
+        (
+          await projectOwner.project.retirementStatus({
+            projectId: first.projectId,
+          })
+        ).retirement?.status,
+        "complete",
+      );
+      assert.ok(transactions.every((count) => count === 0));
+    } finally {
+      await projectBlocker.end();
+      await projectRetirement;
+      if (projectStartup) await stop(projectStartup);
+    }
   },
 );
 
