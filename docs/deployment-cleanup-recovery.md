@@ -9,8 +9,8 @@ at the same time. Readiness and registry publication are separate concerns.
 Apply the additive `20261105213809_deployment_cleanup` migration to the selected
 database before rolling out this worker and web version. It adds one nullable
 JSONB `Deployments.cleanup` column; existing records and identifiers are preserved.
-Apply the complete ordered migration directory, including image publication.
-The cleanup snapshot retains that table as well as all earlier schema entries.
+Apply the complete ordered migration directory, including image publication and
+app retirement. The snapshots retain all three outcomes and earlier schema entries.
 
 Cleanup-only recovery leaves recorded image publication untouched. Publication
 recovery uses the same production executor and app coordinator, but leaves the
@@ -53,8 +53,10 @@ values; ordinary execution and runtime/image adoption retain structured values
 and diagnostic secret registration.
 
 1. Let active deployment attempts finish, then stop this host's worker before
-   running the command. The executor serializes execution and cleanup per app
-   within one process; its locks do not coordinate separate worker/CLI processes.
+   running the command. Production execution, this command, and owner retirement
+   share the per-app PostgreSQL lifecycle lock described in
+   [app retirement](app-retirement-operations.md). Keep the supported quiesced
+   recovery procedure so queued work does not immediately race the operator's review.
    Run only one recovery command at a time. Accepted queue jobs can wait for the
    worker to resume; do not delete or reset the queue.
 2. Use the worker's normal environment and the database that stores the target

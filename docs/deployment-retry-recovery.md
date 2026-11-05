@@ -70,9 +70,12 @@ inspection, building, start, persistence, retirement, and failure reporting. Eac
 attempt releases coordination in `finally`; the last waiter removes its entry.
 Another app can proceed while one app waits on Docker or persistence. Locks order
 execution attempts as they arrive, including delayed retries; they do not promise
-submission-time ordering. They are process-local, not distributed locks. Multiple
-worker processes, replicas, and independently constructed executors need a
-separate coordination design before they can safely share a host.
+submission-time ordering. These FIFO locks are process-local. Production execution
+also takes the per-app PostgreSQL lifecycle lock shared with owner retirement and
+cleanup recovery, publication recovery and background publication; see
+[app retirement](app-retirement-operations.md). The supported
+model remains one worker process per host; this increment does not establish a
+multi-worker scheduler or distributed delivery guarantee.
 
 ## Verification
 

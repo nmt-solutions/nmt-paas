@@ -1,4 +1,4 @@
-import { pgTable, serial, text } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, jsonb } from "drizzle-orm/pg-core";
 import { timestampDefault, ResourceStatus } from "../common";
 import { GitProvider, AppEnv } from "../enums";
 import { bigint } from "drizzle-orm/pg-core";
@@ -12,6 +12,10 @@ export const Apps = pgTable("Apps", {
     .references(() => Projects.id),
   gitProvider: GitProvider("gitProvider").notNull(),
   repoId: bigint({ mode: "number" }).notNull(),
+  retirement: jsonb("retirement").$type<{
+    status: "pending" | "complete";
+    message: string;
+  }>(),
   resourceStatus: ResourceStatus(),
   createdAt: timestampDefault("createdAt"),
   createdBy: text("createdBy").notNull(),

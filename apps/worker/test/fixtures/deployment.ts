@@ -335,6 +335,7 @@ export async function deploymentFixture({
       if (match[2] === "json") {
         if (failInspect[id]) return send(500, { message: failInspect[id] });
         return send(200, {
+          Id: container.Id,
           Name: container.Names[0],
           Image:
             images.get(configurations.get(id)?.Image ?? "")?.id ??
@@ -508,6 +509,7 @@ export async function deploymentFixture({
     dependencies,
     database,
     docker,
+    host: `http://127.0.0.1:${address.port}`,
     images,
     close: async () => {
       for (const socket of sockets) socket.destroy();

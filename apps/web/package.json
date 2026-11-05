@@ -15,7 +15,8 @@
     "test:import": "node tests/run-import-workflows.mjs",
     "test:eligibility": "node tests/run-auth-workflows.mjs --experimental-test-module-mocks tests/active-resource-workflows.test.ts",
     "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts",
-    "test:publication": "tsx --tsconfig test/tsconfig.json --experimental-test-module-mocks --test test/publication.test.mjs"
+    "test:publication": "tsx --tsconfig test/tsconfig.json --experimental-test-module-mocks --test test/publication.test.mjs",
+    "test:retirement": "node tests/run-retirement-workflows.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

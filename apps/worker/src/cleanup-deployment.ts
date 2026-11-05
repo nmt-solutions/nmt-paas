@@ -13,8 +13,8 @@ if (
   );
   process.exitCode = 1;
 } else {
-  // Operator-only command: stop this host's worker first. App locks are local
-  // to one process; this command does not acquire a distributed worker lock.
+  // Operator-only command: quiesce this host's worker as documented. Recovery
+  // also shares retirement's per-app PostgreSQL lifecycle lock.
   let closePersistence: (() => Promise<void>) | undefined;
   try {
     const { database } = await import("@repo/database");

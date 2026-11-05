@@ -1,3 +1,4 @@
+import { withAppLifecycleLock } from "@repo/database/access-layer/app-retirement.dal";
 import { createDeploymentExecutor } from "./execute-deployment.js";
 import {
   getDeployment,
@@ -23,6 +24,7 @@ import env from "../env/vars.js";
 // One instance per process shares app coordination for execution and recovery.
 // Importing this adapter does not register a queue consumer.
 export const executeDeployment = createDeploymentExecutor({
+  withAppLifecycleLock,
   getDeployment,
   updateDeployment,
   saveDeploymentCleanup,

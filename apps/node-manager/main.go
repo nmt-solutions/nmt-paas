@@ -63,6 +63,7 @@ func main() {
 	authenticated.Use(requireAPIAuth(cfg.apiKey))
 	authenticated.POST("/deployments/queue", queueDeployment(cfg))
 	authenticated.POST("/deployments/publication", queuePublication(cfg))
+	authenticated.POST("/apps/:appId/retire", appRetirementHandler(dockerHTTPClient()))
 	authenticated.GET("/admin/host", adminHost)
 	authenticated.GET("/admin/docker/:resource", dockerResources)
 	authenticated.DELETE("/admin/docker/:resource/:id", deleteDockerResource)

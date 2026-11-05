@@ -5,6 +5,7 @@ import { requireApiAuth } from "../../controllers/v1/authentication/auth.js";
 import deploymentsRouter from "./deployments.router.js";
 import adminRouter from "./admin.router.js";
 import logsRouter from "./logs.router.js";
+import appsRouter from "./apps.router.js";
 
 const v1Router = Router();
 
@@ -36,5 +37,6 @@ v1Router.use(invalidJSON);
 v1Router.use("/deployments", deploymentsRouter);
 v1Router.use("/admin", adminRouter);
 v1Router.use("/logs", logsRouter);
+v1Router.use("/apps", appsRouter);
 
 export default v1Router;

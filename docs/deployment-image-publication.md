@@ -74,7 +74,8 @@ so a retained completed/failed deployment job cannot suppress recovery.
 
 The production BullMQ callback calls the same executor with `operation: "publish"`.
 It reloads the authorized publication record, serializes with the same per-app
-FIFO, checks the saved outcome again, and pushes only the recorded image. It never
+FIFO and the dedicated PostgreSQL app lifecycle session lock, checks active-owner
+eligibility and the saved outcome again, and pushes only the recorded image. It never
 clones, builds, creates/starts a container, updates deployment status, attaches
 runtime logs, or retires a runtime. Recovering an older image therefore preserves
 the app's newer running deployment. Repeated or concurrent recovery safely skips
@@ -96,9 +97,14 @@ from the browser.
 
 ## Limits and verification
 
-This remains the supported single-host worker model with process-local app
-coordination. There is no automatic database recovery scanner, distributed lock,
-or guarantee that background publication has finished when a deployment job
+This remains the supported single-host worker model. The shared production executor
+combines its process-local FIFO with the PostgreSQL lifecycle lock for ordinary,
+cleanup-only and publication-only work, including background publication. Retirement
+uses the same database lock. Dedicated sessions keep lock waiters outside the normal
+query pool; sessions close in `finally`. Eligibility is checked after both coordinators
+before publication. Deploy the web and worker updates together. This does not establish
+multi-worker support or an automatic database recovery scanner, or guarantee that
+background publication has finished when a deployment job
 completes. An interrupted background push needs explicit recovery; recovery jobs
 then use the existing BullMQ retries. A lost HTTP acknowledgement can be retried
 without redeployment; durable dispatch acceptance is a separate ticket. The

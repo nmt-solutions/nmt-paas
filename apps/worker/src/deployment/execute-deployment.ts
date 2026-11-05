@@ -67,6 +67,10 @@ export type PublicationRecord = {
 };
 
 export type DeploymentExecutionDependencies = {
+  withAppLifecycleLock?: <T>(
+    appId: number,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   getPublication: (
     deploymentId: number,
     userId: string,
@@ -134,6 +138,7 @@ type DeploymentContainer = {
  * readiness check. Replacement retirement is awaited; publication is background.
  */
 export const createDeploymentExecutor = ({
+  withAppLifecycleLock = async (_appId, operation) => operation(),
   getDeployment,
   saveDeploymentCleanup,
   getPublication,
@@ -680,7 +685,13 @@ export const createDeploymentExecutor = ({
       }
       void Promise.allSettled([
         streamDeploymentLogs(docker, container, deploymentId, userId),
-        withAppLock(deployment.appId, () => publish(deploymentId, userId)),
+        withAppLock(deployment.appId, () =>
+          withAppLifecycleLock(deployment.appId, async () => {
+            const current = await getDeployment(deploymentId, userId);
+            if (!current) throw new Error("Publication not found");
+            return publish(deploymentId, userId);
+          }),
+        ),
       ]);
     };
 
@@ -1063,12 +1074,14 @@ export const createDeploymentExecutor = ({
         if (!publication) throw new Error("Publication not found");
         const deployment = await getDeployment(deploymentId, userId);
         if (!deployment) throw new Error("Publication not found");
-        return withAppLock(deployment.appId, async () => {
-          // Eligibility can change while waiting for this app's turn.
-          const current = await getDeployment(deploymentId, userId);
-          if (!current) throw new Error("Publication not found");
-          return publish(deploymentId, userId);
-        });
+        return withAppLock(deployment.appId, () =>
+          withAppLifecycleLock(deployment.appId, async () => {
+            // Eligibility can change while waiting for either app coordinator.
+            const current = await getDeployment(deploymentId, userId);
+            if (!current) throw new Error("Publication not found");
+            return publish(deploymentId, userId);
+          }),
+        );
       }
 
       const reportFailure = async (
@@ -1169,6 +1182,8 @@ export const createDeploymentExecutor = ({
           return reportFailure(failure, runtimeStarted);
         }
       };
-      return withAppLock(deployment.appId, attempt);
+      return withAppLock(deployment.appId, () =>
+        withAppLifecycleLock(deployment!.appId, attempt),
+      );
     });
 };
