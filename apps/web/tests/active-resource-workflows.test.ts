@@ -410,7 +410,14 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
     await import("@repo/database/access-layer/deployment-logs.dal");
   const docker = await deploymentFixture();
   t.after(docker.close);
-  const persistence = { getDeployment, updateDeployment, createDeploymentLogs };
+  const publicationPersistence =
+    await import("@repo/database/access-layer/deployment-publication.dal");
+  const persistence = {
+    ...publicationPersistence,
+    getDeployment,
+    updateDeployment,
+    createDeploymentLogs,
+  };
   const execute = createDeploymentExecutor({
     ...docker.dependencies,
     ...persistence,
@@ -483,6 +490,15 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
       }),
       /Deployment not found/,
       `${state}: cleanup`,
+    );
+    await assert.rejects(
+      execute({
+        userId: state === "foreign-delivery" ? "another-owner" : userId,
+        deploymentId: queued.id,
+        operation: "publish",
+      }),
+      /Publication not found/,
+      `${state}: publication`,
     );
     assert.deepEqual(
       (await docker.docker.listContainers({ all: true }))
@@ -562,8 +578,11 @@ test("execution discards an eligible snapshot retired before it acquires the app
   const userId = "retired-snapshot-owner";
   const resource = await resourceFixture(userId);
   let retireSnapshot = true;
+  const publicationPersistence =
+    await import("@repo/database/access-layer/deployment-publication.dal");
   const execute = createDeploymentExecutor({
     ...docker.dependencies,
+    ...publicationPersistence,
     updateDeployment,
     createDeploymentLogs,
     getDeployment: async (id, ownerId) => {
@@ -622,6 +641,40 @@ test("execution discards an eligible snapshot retired before it acquires the app
   const afterCleanup = (await owner(userId).app.get({ appId: resource.appId }))
     .deployments[0];
   assert.deepEqual(afterCleanup, deployment);
+  await publicationPersistence.recordPublication(
+    {
+      deploymentId: resource.deploymentId,
+      imageId: "retired-snapshot-image",
+      imageName: "ghcr.io/fixture/retired-snapshot:recorded",
+    },
+    userId,
+  );
+  const publicationBefore = await publicationPersistence.getPublication(
+    resource.deploymentId,
+    userId,
+  );
+  retireSnapshot = true;
+  await assert.rejects(
+    execute({
+      userId,
+      deploymentId: resource.deploymentId,
+      operation: "publish",
+    }),
+    /Publication not found/,
+  );
+  await fixtures.query(
+    `UPDATE "Projects" SET "resourceStatus" = 'active' WHERE id = $1`,
+    [resource.projectId],
+  );
+  assert.deepEqual(
+    await publicationPersistence.getPublication(resource.deploymentId, userId),
+    publicationBefore,
+  );
+  assert.deepEqual(
+    (await owner(userId).app.get({ appId: resource.appId })).deployments[0],
+    deployment,
+  );
+  assert.equal(docker.images.size, 0);
 });
 
 test("foreign and unauthenticated callers receive no private app data or host access", async () => {

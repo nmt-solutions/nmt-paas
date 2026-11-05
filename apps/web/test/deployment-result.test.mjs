@@ -108,6 +108,8 @@ test(
     });
     const { getDeployment, updateDeployment, saveDeploymentCleanup } =
       await import("@repo/database/access-layer/deployment.dal");
+    const publicationPersistence =
+      await import("@repo/database/access-layer/deployment-publication.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
     const { createDeploymentExecutor } =
@@ -115,6 +117,7 @@ test(
     const { createDockerCommandAdapter } =
       await import("../../worker/src/deployment/docker-command-adapter.ts");
     const persistence = {
+      ...publicationPersistence,
       getDeployment,
       updateDeployment,
       saveDeploymentCleanup,
@@ -211,6 +214,15 @@ test(
       ],
     });
     const trpc = createTRPCOptionsProxy({ client, queryClient });
+    const { deploymentRouter } =
+      await import("../src/trpc/routers/deployment.trpcs.ts");
+    const publicationView = await deploymentRouter
+      .createCaller({ userInfo: { user: { id: userId } } })
+      .publication({ deploymentId });
+    queryClient.setQueryData(
+      trpc.deployment.publication.queryKey({ deploymentId }),
+      publicationView,
+    );
     queryClient.setQueryData(trpc.app.get.queryKey({ appId: 7 }), app);
     queryClient.setQueryData(
       trpc.app.getLatestSuccessDeployment.queryKey({ appId: 7 }),
@@ -246,6 +258,8 @@ test(
       );
     await renderPage(h(AppDetails, { appId: 7 }));
     const overview = dom.window.document.body.textContent;
+    assert.match(overview, /Image publication/);
+    assert.match(overview, /Publication is separate from container start/);
     assert.match(
       overview,
       /Latest deployment statusContainer startedDocker accepted the container start\. Application readiness has not been checked\./,

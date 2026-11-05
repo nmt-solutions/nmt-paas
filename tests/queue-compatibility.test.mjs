@@ -98,8 +98,13 @@ async function startProducer(kind, redisPort) {
   return { kind, base, child };
 }
 
-async function submit(producer, body, authorization = `Bearer ${password}`) {
-  const response = await fetch(`${producer.base}/deployments/queue`, {
+async function submit(
+  producer,
+  body,
+  authorization = `Bearer ${password}`,
+  action = "queue",
+) {
+  const response = await fetch(`${producer.base}/deployments/${action}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -259,6 +264,69 @@ describe(
         assert.ok(result.body.errors.fieldErrors.deploymentId, producer.kind);
       }
       assert.equal(await queue.getWaitingCount(), before);
+    });
+
+    test("both producers authenticate publication-only recovery and deliver it through the existing BullMQ policy", async () => {
+      const received = [];
+      await consume(
+        async (job) => {
+          received.push({ data: job.data, options: job.opts });
+        },
+        async () => {
+          for (const [index, producer] of producers.entries()) {
+            const payload = {
+              userId: "publication-owner",
+              deploymentId: 14000 + index,
+            };
+            assert.equal(
+              (await submit(producer, payload, null, "publication")).status,
+              401,
+            );
+            assert.equal(
+              (
+                await submit(
+                  producer,
+                  { ...payload, deploymentId: null },
+                  `Bearer ${password}`,
+                  "publication",
+                )
+              ).status,
+              400,
+            );
+            assert.equal(
+              (
+                await submit(
+                  producer,
+                  payload,
+                  `Bearer ${password}`,
+                  "publication",
+                )
+              ).status,
+              201,
+            );
+          }
+          await until(
+            () => received.length === producers.length,
+            "Publication recovery reaches BullMQ",
+          );
+        },
+      );
+      assert.deepEqual(
+        received
+          .map((job) => job.data)
+          .sort((a, b) => a.deploymentId - b.deploymentId),
+        producers.map((_, index) => ({
+          userId: "publication-owner",
+          deploymentId: 14000 + index,
+          operation: "publish",
+        })),
+      );
+      for (const { options } of received) {
+        assert.equal(options.attempts, 3);
+        assert.deepEqual(options.backoff, { type: "exponential", delay: 2000 });
+        assert.equal(options.removeOnComplete, 100);
+        assert.equal(options.removeOnFail, 1000);
+      }
     });
 
     test("the installed BullMQ worker receives the supported payload and queue policy from each HTTP producer", async () => {

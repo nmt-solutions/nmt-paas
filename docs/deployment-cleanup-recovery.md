@@ -9,6 +9,14 @@ at the same time. Readiness and registry publication are separate concerns.
 Apply the additive `20261105213809_deployment_cleanup` migration to the selected
 database before rolling out this worker and web version. It adds one nullable
 JSONB `Deployments.cleanup` column; existing records and identifiers are preserved.
+Apply the complete ordered migration directory, including image publication.
+The cleanup snapshot retains that table as well as all earlier schema entries.
+
+Cleanup-only recovery leaves recorded image publication untouched. Publication
+recovery uses the same production executor and app coordinator, but leaves the
+cleanup ledger and artifacts untouched, even when cleanup remains pending. See
+[publication recovery](deployment-image-publication.md) for its authenticated
+owner/admin workflow.
 Use the repository's database environment/migration configuration for the intended
 database; do not reset it or point fixture commands at production.
 

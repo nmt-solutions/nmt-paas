@@ -69,6 +69,23 @@ export class ControlPanelAPIClient {
     return response.data;
   }
 
+  async queuePublication(deploymentId: number, userId: string): Promise<void> {
+    try {
+      const response = await axios.post<APIResponse<true, ValidationErrors>>(
+        `${this.baseUrl}/deployments/publication`,
+        { deploymentId, userId },
+        { headers: this.getHeaders(), timeout: 15_000 },
+      );
+      if (response.data.status !== "success" || response.data.data !== true)
+        throw new Error("Publication queue did not acknowledge recovery");
+    } catch {
+      // Transport exceptions may contain the bearer header or request config.
+      throw new Error(
+        "Publication recovery was not acknowledged. Check its status before retrying.",
+      );
+    }
+  }
+
   async streamRuntimeLogs(
     deploymentId: number,
     onLog: (log: string) => void,

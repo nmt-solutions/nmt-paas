@@ -6,6 +6,11 @@ import {
 } from "@repo/database/access-layer/deployment.dal";
 import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import {
+  getPublication,
+  recordPublication,
+  updatePublication,
+} from "@repo/database/access-layer/deployment-publication.dal";
+import {
   createBuilderContainer,
   executeCommand,
   getDocker,
@@ -21,6 +26,9 @@ export const executeDeployment = createDeploymentExecutor({
   getDeployment,
   updateDeployment,
   saveDeploymentCleanup,
+  getPublication,
+  recordPublication,
+  updatePublication,
   createDeploymentLogs,
   getDocker,
   getCleanupDocker: async () => getLocalDocker(),

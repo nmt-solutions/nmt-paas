@@ -24,6 +24,15 @@ test("cleanup-only recovery survives restart, resolves partial removal, and pres
   );
   const restarted = createDeploymentExecutor({
     ...fixture.dependencies,
+    getPublication: async () => {
+      throw new Error("Cleanup must not read publication state");
+    },
+    recordPublication: async () => {
+      throw new Error("Cleanup must not record publication");
+    },
+    updatePublication: async () => {
+      throw new Error("Cleanup must not change publication state");
+    },
     getCleanupDocker: fixture.dependencies.getDocker,
     getDocker: async () => {
       throw new Error("Cleanup must not authenticate with a registry");
@@ -58,7 +67,12 @@ test("cleanup-only recovery survives restart, resolves partial removal, and pres
   });
   assert.equal(recovered?.status, "complete");
   assert.deepEqual(
-    await restarted({ userId, deploymentId, action: "cleanup" }),
+    await restarted({
+      userId,
+      deploymentId,
+      action: "cleanup",
+      operation: "publish",
+    }),
     recovered,
   );
   assert.equal(

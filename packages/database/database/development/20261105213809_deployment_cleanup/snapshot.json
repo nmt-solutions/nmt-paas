@@ -2,7 +2,7 @@
   "version": "8",
   "dialect": "postgres",
   "id": "38c64e49-cc13-416a-97e5-faa18517f436",
-  "prevIds": ["74d7680a-3c90-4ece-943d-074cf4d30501"],
+  "prevIds": ["9d665833-6452-465b-9f34-534729ac5bb6"],
   "ddl": [
     {
       "values": ["preview", "production"],
@@ -1332,6 +1332,111 @@
       "schema": "public",
       "table": "AppDomains",
       "entityType": "uniques"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "DeploymentPublications",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "deploymentId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "imageId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "imageName",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'pending'",
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lastError",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updatedAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "nameExplicit": false,
+      "columns": ["deploymentId"],
+      "schemaTo": "public",
+      "tableTo": "Deployments",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "DeploymentPublications_deploymentId_Deployments_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "DeploymentPublications"
+    },
+    {
+      "columns": ["deploymentId"],
+      "nameExplicit": false,
+      "name": "DeploymentPublications_pkey",
+      "schema": "public",
+      "table": "DeploymentPublications",
+      "entityType": "pks"
     }
   ],
   "renames": []

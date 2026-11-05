@@ -66,6 +66,8 @@ test(
       updateDeployment,
       saveDeploymentCleanup,
     } = await import("@repo/database/access-layer/deployment.dal");
+    const publicationPersistence =
+      await import("@repo/database/access-layer/deployment-publication.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
     const { getUserApp } = await import("@repo/database/access-layer/apps.dal");
@@ -159,6 +161,7 @@ test(
       await t.test(scenario.name, async (t) => {
         // Reset only this disposable database's fixture state between attempts.
         await database.delete(schema.DeploymentLogs);
+        await database.delete(schema.DeploymentPublications);
         await database.delete(schema.Deployments);
         await createDeployment({
           id: deploymentId,
@@ -173,6 +176,7 @@ test(
         const fixture = await deploymentFixture(scenario.options);
         t.after(fixture.close);
         const storage = {
+          ...publicationPersistence,
           getDeployment,
           updateDeployment,
           saveDeploymentCleanup,

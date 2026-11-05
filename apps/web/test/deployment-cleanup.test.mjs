@@ -114,6 +114,8 @@ test(
     });
     const { getDeployment, updateDeployment, saveDeploymentCleanup } =
       await import("@repo/database/access-layer/deployment.dal");
+    const publicationPersistence =
+      await import("@repo/database/access-layer/deployment-publication.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
     const { createDeploymentExecutor } =
@@ -121,6 +123,7 @@ test(
     const { createDockerCommandAdapter } =
       await import("../../worker/src/deployment/docker-command-adapter.ts");
     const persistence = {
+      ...publicationPersistence,
       getDeployment,
       updateDeployment,
       saveDeploymentCleanup,
@@ -143,6 +146,15 @@ test(
     const caller = appRouter.createCaller({
       userInfo: { user: { id: userId } },
     });
+    const { deploymentRouter } =
+      await import("../src/trpc/routers/deployment.trpcs.ts");
+    const publicationCaller = deploymentRouter.createCaller({
+      userInfo: { user: { id: userId } },
+    });
+    const publicationBefore = await publicationCaller.publication({
+      deploymentId,
+    });
+    assert.equal(publicationBefore.publication.status, "pending");
     const app = await caller.get({ appId: 7 });
     assert.equal(app.deployments[0].id, deploymentId);
     assert.equal(app.deployments[0].status, "success");
@@ -224,6 +236,10 @@ test(
       ],
     });
     const trpc = createTRPCOptionsProxy({ client, queryClient });
+    queryClient.setQueryData(
+      trpc.deployment.publication.queryKey({ deploymentId }),
+      publicationBefore,
+    );
     queryClient.setQueryData(trpc.app.get.queryKey({ appId: 7 }), app);
     queryClient.setQueryData(
       trpc.app.getLatestSuccessDeployment.queryKey({ appId: 7 }),
@@ -260,6 +276,7 @@ test(
     await renderPage(h(AppDetails, { appId: 7 }));
     const overview = dom.window.document.body.textContent;
     assert.match(overview, /Cleanup incomplete/);
+    assert.match(overview, /Image publication/);
     assert.match(
       overview,
       /Latest deployment statusContainer startedDocker accepted the container start\. Application readiness has not been checked\./,
@@ -369,6 +386,11 @@ test(
     );
     assert.match(child.stdout, /cleanup complete/);
     assert.doesNotMatch(child.stdout + child.stderr, /fixture-pat/);
+    assert.deepEqual(
+      await publicationCaller.publication({ deploymentId }),
+      publicationBefore,
+      "The separate-process cleanup operator must leave publication untouched",
+    );
     const complete = (await caller.get({ appId: 7 })).deployments[0].cleanup;
     assert.equal(complete.status, "complete");
     assert.deepEqual(
