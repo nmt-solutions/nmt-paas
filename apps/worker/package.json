@@ -16,7 +16,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -b",
     "lint": "eslint --max-warnings 0",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:docker": "node --import tsx --test test/docker.smoke.ts",
+    "check-types:test": "tsc -p tsconfig.test.json"
   },
   "keywords": [],
   "author": "",
