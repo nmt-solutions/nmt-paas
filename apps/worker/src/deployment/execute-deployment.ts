@@ -60,14 +60,18 @@ export type DeploymentExecutionDependencies = {
     createdBy: string;
   }) => Promise<unknown>;
   getDocker: () => Promise<Docker>;
-  createBuilderContainer: (deploymentId: number) => Promise<Docker.Container>;
+  // Register acquisition synchronously, before starting or preparing the builder.
+  createBuilderContainer: (
+    deploymentId: number,
+    onAcquired: (container: Docker.Container) => void,
+  ) => Promise<Docker.Container>;
   executeCommand: (
     container: Docker.Container,
     command: string[],
     workingDirectory?: string,
     stage?: string,
   ) => Promise<void>;
-  getCloneUrl: (userId: string, repository: string) => Promise<string>;
+  getCloneUrl: (userId: string, repositoryId: number) => Promise<string>;
   fetchEnvVars: (
     projectId: number,
     env: "production" | "preview",
@@ -461,6 +465,42 @@ export const createDeploymentExecutor = ({
     }
   };
 
+  const cleanupFailedArtifact = async (
+    deploymentId: number,
+    userId: string,
+    artifact: string,
+    remove: () => Promise<unknown>,
+  ) => {
+    try {
+      await remove();
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "statusCode" in error &&
+        error.statusCode === 404
+      )
+        return;
+      const message = safeDiagnosticError(
+        error,
+        `Cleanup failed for ${artifact}`,
+      ).message;
+      console.error(message);
+      try {
+        await createDeploymentLogs({
+          deploymentId,
+          createdBy: userId,
+          message,
+        });
+      } catch (logError) {
+        console.error(
+          "Failed to save cleanup diagnostic:",
+          safeDiagnosticError(logError),
+        );
+      }
+    }
+  };
+
   const deploy = async (userId: string, deploymentId: number) => {
     const deployment = await getDeployment(deploymentId, userId);
 
@@ -504,7 +544,9 @@ export const createDeploymentExecutor = ({
 
       const imageName = `ghcr.io/${githubUserName}/${deploymentId}:${deploymentId}`;
 
-      const builderContainer = await createBuilderContainer(deploymentId);
+      let builderContainer: Docker.Container | undefined;
+
+      let committedImageId: string | undefined;
 
       let deploymentContainer: import("dockerode").Container | undefined;
 
@@ -513,6 +555,14 @@ export const createDeploymentExecutor = ({
       let oldContainers: DeploymentContainer[] = [];
 
       try {
+        builderContainer = await createBuilderContainer(
+          deploymentId,
+          (container) => {
+            // Own the handle before builder start or preparation can fail.
+            builderContainer = container;
+          },
+        );
+
         /*
          * Clone.
          */
@@ -532,7 +582,7 @@ export const createDeploymentExecutor = ({
 
         console.log(`Cloning repository for ${appName}...`);
 
-        const cloneUrl = await getCloneUrl(userId, appName);
+        const cloneUrl = await getCloneUrl(userId, deployment.repoId);
 
         await executeCommand(
           builderContainer,
@@ -659,14 +709,16 @@ export const createDeploymentExecutor = ({
          * JSON.stringify prevents quotes inside startCommand
          * from breaking the generated CMD instruction.
          */
-        await builderContainer.commit({
+        const committedImage = await builderContainer.commit({
           repo: `ghcr.io/${githubUserName}/${deploymentId}`,
           tag: deploymentId.toString(),
           changes: [
-            "WORKDIR /app",
+            `WORKDIR ${rootDirectory}`,
             `CMD ${JSON.stringify(["sh", "-c", startCommand])}`,
           ],
         });
+
+        committedImageId = committedImage.Id;
 
         console.log(`Application image created: ${imageName}`);
 
@@ -741,7 +793,11 @@ export const createDeploymentExecutor = ({
         /*
          * Start the new container before touching the old one.
          */
-        await deploymentContainer.start();
+        try {
+          await deploymentContainer.start();
+        } catch (error) {
+          throw safeDiagnosticError(error, "Start application");
+        }
 
         deploymentContainerStarted = true;
 
@@ -798,46 +854,37 @@ export const createDeploymentExecutor = ({
          * deploy() can return now.
          */
         return;
-      } catch (error) {
-        /*
-         * If the new container was created but failed to start,
-         * remove it and leave the previous application untouched.
-         */
-        if (deploymentContainer && !deploymentContainerStarted) {
-          try {
-            await deploymentContainer.remove({
-              force: true,
-            });
-          } catch (cleanupError) {
-            console.error(
-              `Failed to remove failed deployment container ${deploymentId}:`,
-              safeDiagnosticError(cleanupError),
-            );
-          }
-        }
-
-        throw error;
       } finally {
         /*
-         * If deployment succeeded, cleanupDeployment() already
-         * owns builder cleanup.
-         *
-         * If deployment failed before background cleanup started,
-         * clean the builder here.
+         * Before replacement start, release only this attempt's acquired handles.
+         * After start, the established success path owns background cleanup.
          */
         if (!deploymentContainerStarted) {
-          try {
-            await builderContainer.remove({
-              force: true,
-            });
-
-            console.log(
-              `Removed builder container for deployment ${deploymentId}`,
+          if (deploymentContainer) {
+            const container = deploymentContainer;
+            await cleanupFailedArtifact(
+              deploymentId,
+              userId,
+              `runtime ${container.id}`,
+              () => container.remove({ force: true }),
             );
-          } catch (cleanupError) {
-            console.error(
-              `Failed to remove builder container for deployment ${deploymentId}:`,
-              safeDiagnosticError(cleanupError),
+          }
+          if (builderContainer) {
+            const container = builderContainer;
+            await cleanupFailedArtifact(
+              deploymentId,
+              userId,
+              `builder ${container.id}`,
+              () => container.remove({ force: true }),
+            );
+          }
+          if (committedImageId) {
+            const image = docker.getImage(committedImageId);
+            await cleanupFailedArtifact(
+              deploymentId,
+              userId,
+              `image ${committedImageId}`,
+              () => image.remove(),
             );
           }
         }
