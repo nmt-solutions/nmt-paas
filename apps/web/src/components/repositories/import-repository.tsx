@@ -155,22 +155,53 @@ const ImportRepository = ({
     });
   };
 
-  const showSubmission = (result: { outcome: "accepted" | "uncertain" | "rejected"; projectId: number; appId: number; deploymentId: number; message: string }) => {
-    if (result.outcome !== "uncertain") clearDeploymentSubmissionId(submissionScope);
-    toast({ title: result.outcome === "accepted" ? "Deployment queued" : result.outcome === "rejected" ? "Dispatch rejected" : "Deployment saved; confirmation pending", description: result.message, variant: result.outcome === "accepted" ? "success" : "warning" });
-    router.push(`/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`);
+  const showSubmission = (result: {
+    outcome: "accepted" | "uncertain" | "rejected";
+    projectId: number;
+    appId: number;
+    deploymentId: number;
+    message: string;
+  }) => {
+    if (result.outcome !== "uncertain")
+      clearDeploymentSubmissionId(submissionScope);
+    toast({
+      title:
+        result.outcome === "accepted"
+          ? "Deployment queued"
+          : result.outcome === "rejected"
+            ? "Dispatch rejected"
+            : "Deployment saved; confirmation pending",
+      description: result.message,
+      variant: result.outcome === "accepted" ? "success" : "warning",
+    });
+    router.push(
+      `/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`,
+    );
   };
 
   const deployProject = async () => {
     const submissionId = getDeploymentSubmissionId(submissionScope);
     setIsCheckingSubmission(true);
     try {
-      const existing = await queryClient.fetchQuery({ ...trpc.deployment.submission.queryOptions({ submissionId }), staleTime: 0 });
-      if (existing) { showSubmission(existing); return; }
+      const existing = await queryClient.fetchQuery({
+        ...trpc.deployment.submission.queryOptions({ submissionId }),
+        staleTime: 0,
+      });
+      if (existing) {
+        showSubmission(existing);
+        return;
+      }
     } catch {
-      toast({ title: "Could not confirm submission", description: "Retry to check the same submission when the service returns.", variant: "warning" });
+      toast({
+        title: "Could not confirm submission",
+        description:
+          "Retry to check the same submission when the service returns.",
+        variant: "warning",
+      });
       return;
-    } finally { setIsCheckingSubmission(false); }
+    } finally {
+      setIsCheckingSubmission(false);
+    }
     const envVarsArray = envVarsFields
       .map((id) => envVars[id])
       .filter((ev) => ev?.key && ev?.value)
@@ -197,9 +228,15 @@ const ImportRepository = ({
         frameworkConfig: {
           ...frameworkPreset,
           rootDirectory: rootDirEnabled ? rootDir : frameworkPreset.rootDirectory,
-          installCommand: installCommandEnabled ? installCommand : frameworkPreset.installCommand,
-          buildCommand: buildCommandEnabled ? buildCommand : frameworkPreset.buildCommand,
-          outputDirectory: outputDirectoryEnabled ? outputDirectory : frameworkPreset.outputDirectory,
+          installCommand: installCommandEnabled
+            ? installCommand
+            : frameworkPreset.installCommand,
+          buildCommand: buildCommandEnabled
+            ? buildCommand
+            : frameworkPreset.buildCommand,
+          outputDirectory: outputDirectoryEnabled
+            ? outputDirectory
+            : frameworkPreset.outputDirectory,
         },
       },
       {

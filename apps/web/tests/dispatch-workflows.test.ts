@@ -333,7 +333,7 @@ test(
     });
     assert.equal(accepted.outcome, "uncertain");
     hostMode = "available";
-    const recovery = await startRecovery();
+    const recoveries = await Promise.all([startRecovery(), startRecovery()]);
     try {
       await until(
         async () =>
@@ -354,7 +354,7 @@ test(
         1,
       );
     } finally {
-      await stop(recovery);
+      for (const recovery of recoveries) await stop(recovery);
     }
   },
 );
@@ -574,6 +574,9 @@ test(
       userInfo: userInfos.get("ui-owner"),
       caller,
       appId: first.appId,
+      setHostMode: (mode: typeof hostMode) => {
+        hostMode = mode;
+      },
     });
   },
 );

@@ -29,24 +29,63 @@ export default function AppDetails({ appId }: { appId: number }) {
   const removeEnv = useMutation({ ...trpc.app.deleteEnvVar.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Environment variable removed", description: "Redeploy to update the running application.", variant: "success" }); }, onError: (error) => toast({ title: "Could not remove variable", description: error.message, variant: "error" }) });
   const removeApp = useMutation({ ...trpc.app.delete.mutationOptions(), onSuccess: () => { toast({ title: "Application deleted", description: "The application and its project were removed.", variant: "success" }); router.push("/projects"); }, onError: (error) => toast({ title: "Could not delete application", description: error.message, variant: "error" }) });
   const updateConfig = useMutation({ ...trpc.app.updateConfig.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Configuration saved", description: "Redeploy to use the updated build settings.", variant: "success" }); }, onError: (error) => toast({ title: "Could not save configuration", description: error.message, variant: "error" }) });
-  const showSubmission = (result: { outcome: "accepted" | "uncertain" | "rejected"; deploymentId: number; message: string }) => {
-    if (result.outcome !== "uncertain") clearDeploymentSubmissionId(`redeploy:${appId}`);
-    setNeedsRedeploy(false); void refresh();
-    void client.invalidateQueries({ queryKey: trpc.deployment.dispatches.queryKey({ appId }) });
-    toast({ title: result.outcome === "accepted" ? "Redeployment queued" : result.outcome === "rejected" ? "Dispatch rejected" : "Deployment saved; confirmation pending", description: result.message, variant: result.outcome === "accepted" ? "success" : "warning" });
+  const showSubmission = (result: {
+    outcome: "accepted" | "uncertain" | "rejected";
+    deploymentId: number;
+    message: string;
+  }) => {
+    if (result.outcome !== "uncertain")
+      clearDeploymentSubmissionId(`redeploy:${appId}`);
+    setNeedsRedeploy(false);
+    void refresh();
+    void client.invalidateQueries({
+      queryKey: trpc.deployment.dispatches.queryKey({ appId }),
+    });
+    toast({
+      title:
+        result.outcome === "accepted"
+          ? "Redeployment queued"
+          : result.outcome === "rejected"
+            ? "Dispatch rejected"
+            : "Deployment saved; confirmation pending",
+      description: result.message,
+      variant: result.outcome === "accepted" ? "success" : "warning",
+    });
     router.replace(`?deployment=${result.deploymentId}`);
   };
-  const redeploy = useMutation({ ...trpc.app.redeploy.mutationOptions(), onSuccess: showSubmission, onError: () => toast({ title: "Could not confirm submission", description: "Its outcome is unknown. Retry to check the same submission; your retry will keep its identity.", variant: "warning" }) });
+  const redeploy = useMutation({
+    ...trpc.app.redeploy.mutationOptions(),
+    onSuccess: showSubmission,
+    onError: () =>
+      toast({
+        title: "Could not confirm submission",
+        description:
+          "Its outcome is unknown. Retry to check the same submission; your retry will keep its identity.",
+        variant: "warning",
+      }),
+  });
   const startRedeployment = async () => {
     setIsResolvingSubmission(true);
     const submissionId = getDeploymentSubmissionId(`redeploy:${appId}`);
     try {
-      const existing = await client.fetchQuery({ ...trpc.deployment.submission.queryOptions({ submissionId }), staleTime: 0 });
+      const existing = await client.fetchQuery({
+        ...trpc.deployment.submission.queryOptions({ submissionId }),
+        staleTime: 0,
+      });
       if (existing) showSubmission(existing);
       else redeploy.mutate({ appId, submissionId });
-    } catch { toast({ title: "Could not confirm submission", description: "Retry to check the same submission when the service returns.", variant: "warning" }); }
-    finally { setIsResolvingSubmission(false); }
+    } catch {
+      toast({
+        title: "Could not confirm submission",
+        description:
+          "Retry to check the same submission when the service returns.",
+        variant: "warning",
+      });
+    } finally {
+      setIsResolvingSubmission(false);
+    }
   };
+
   useEffect(() => { const latestStatus = app?.deployments ? [...app.deployments].sort((a, b) => b.id - a.id)[0]?.status.toLowerCase() : undefined; if (latestStatus && ["queued", "building", "deploying"].includes(latestStatus)) void refetchApp(); }, [app, refetchApp]);
   if (isLoading) return <LoadingDetails />;
   if (isError || !app) return <div className="glass-panel p-8 text-center"><h1 className="font-semibold">Application unavailable</h1><p className="mt-2 text-sm text-muted-foreground">It may have been deleted or you may no longer have access.</p><Button asChild variant="outline" className="mt-5"><Link href="/projects">Back to projects</Link></Button></div>;

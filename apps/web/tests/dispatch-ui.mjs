@@ -8,6 +8,7 @@ export async function exerciseDispatchUI({
   userInfo,
   caller,
   appId,
+  setHostMode,
 }) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id='root'></div></body></html>",
@@ -161,7 +162,34 @@ export async function exerciseDispatchUI({
       navigation.at(-1),
       `?deployment=${Math.max(...deployments.map(({ id }) => id))}`,
     );
+    for (const [mode, expected] of [
+      ["unavailable", /Queue confirmation pending/],
+      ["rejected", /Dispatch rejected by the host/],
+    ]) {
+      setHostMode(mode);
+      await act(async () => {
+        await caller.app.redeploy({ appId, submissionId: crypto.randomUUID() });
+        queryClient.setQueryData(
+          trpc.app.get.queryKey({ appId }),
+          await caller.app.get({ appId }),
+        );
+        queryClient.setQueryData(
+          trpc.deployment.dispatches.queryKey({ appId }),
+          await caller.deployment.dispatches({ appId }),
+        );
+      });
+      await until(() =>
+        expected.test(
+          dom.window.document.querySelector("[role=status]")?.textContent ?? "",
+        ),
+      );
+      assert.match(
+        dom.window.document.querySelector("[role=status]")?.textContent ?? "",
+        expected,
+      );
+    }
   } finally {
+    setHostMode("available");
     await act(() => root.unmount());
     queryClient.clear();
     dom.window.close();
