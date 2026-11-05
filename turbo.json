@@ -34,7 +34,8 @@
       ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": ["^lint"],
+      "env": ["TEST_DATABASE_URL"]
     },
     "test:auth": {
       "dependsOn": ["^build"],
