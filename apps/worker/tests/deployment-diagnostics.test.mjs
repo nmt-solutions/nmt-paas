@@ -38,8 +38,11 @@ test(
       "../../../packages/database/database/development/",
       import.meta.url,
     );
-    for (const directory of (await fs.readdir(migrations)).sort()) {
-      if (!/^\d+_/.test(directory)) continue;
+    const directories = (await fs.readdir(migrations, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && /^\d+_/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    for (const directory of directories) {
       await fixtureDb.query(
         await fs.readFile(
           new URL(`${directory}/migration.sql`, migrations),
