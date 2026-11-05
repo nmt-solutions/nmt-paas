@@ -206,6 +206,27 @@ test("history access applies owner and active app/project/deployment eligibility
   }
 });
 
+test("the eligible deployment owner can read command diagnostics recorded by a builder", async () => {
+  const previous = await caller.deploymentLogs({
+    appId: 1,
+    deploymentId: 10,
+    limit: 1,
+  });
+  await fixture.query(
+    `INSERT INTO "DeploymentLogs" ("deploymentId", message, "createdBy") VALUES (10, 'builder command diagnostic', '/builder-10')`,
+  );
+  const page = await caller.deploymentLogs({
+    appId: 1,
+    deploymentId: 10,
+    limit: 1,
+    after: previous.newestCursor,
+  });
+  assert.deepEqual(
+    page.logs.map((log) => log.message),
+    ["builder command diagnostic"],
+  );
+});
+
 async function browser(t, search = "deployment=10") {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id='root'></div></body></html>",

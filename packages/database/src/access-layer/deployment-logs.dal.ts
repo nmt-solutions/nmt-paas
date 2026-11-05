@@ -36,7 +36,8 @@ export const readDeploymentLogs = async (input: {
     .where(
       and(
         eq(DeploymentLogs.deploymentId, deployment.id),
-        eq(DeploymentLogs.createdBy, input.userId),
+        // Record creators include builder/runtime identities. Ownership is
+        // established by the eligible deployment above, not log provenance.
         eq(DeploymentLogs.resourceStatus, "active"),
         input.before === undefined
           ? undefined

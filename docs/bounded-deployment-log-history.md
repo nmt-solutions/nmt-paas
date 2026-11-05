@@ -7,6 +7,8 @@ Every cursor request checks deployment ownership/active status and the shared
 `activeAppEligibility` rule: active app, active parent project, app creator and
 project owner. A foreign, retired or mismatched deployment returns `NOT_FOUND`;
 anonymous requests return `UNAUTHORIZED`. No host credential reaches the browser.
+Log record creators can be builder/runtime identities; deployment ownership
+authorizes reading their command diagnostics too.
 
 ## Read limits and cursors
 
