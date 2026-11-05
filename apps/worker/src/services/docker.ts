@@ -2,6 +2,7 @@ import { createDeploymentLogs } from "@repo/database/access-layer/deployment-log
 import Docker from "dockerode";
 import env from "../env/vars.js";
 import os from "os";
+import { DiagnosticOutput, safeDiagnosticError } from "./diagnostics.js";
 
 export const getDocker = async () => {
   const socketPath =
@@ -50,11 +51,12 @@ export async function createBuilderContainer(
 
   await container.start();
 
-  await executeCommand(container, [
-    "sh",
-    "-c",
-    "apk add --no-cache git docker-cli bash",
-  ]);
+  await executeCommand(
+    container,
+    ["sh", "-c", "apk add --no-cache git docker-cli bash"],
+    undefined,
+    "Prepare builder",
+  );
 
   return container;
 }
@@ -63,48 +65,54 @@ export async function executeCommand(
   container: Docker.Container,
   command: string[],
   workingDir?: string,
+  stage = "Container command",
 ) {
-  const exec = await container.exec({
-    Cmd: command,
-    AttachStdout: true,
-    AttachStderr: true,
-    WorkingDir: workingDir,
-  });
-
-  const stream = await exec.start({
-    hijack: true,
-  });
-
-  const details = await container.inspect();
-  const containerName = details.Name;
-  const deploymentId = Number(containerName.replace("/builder-", ""));
-
-  stream.on("data", async (chunk: Buffer) => {
-    const message = chunk.toString("utf8").replace(/\0/g, "");
-
-    console.log(message);
-
-    await createDeploymentLogs({
-      deploymentId,
-      message,
-      createdBy: containerName,
+  try {
+    const exec = await container.exec({
+      Cmd: command,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+      WorkingDir: workingDir,
     });
-  });
 
-  await new Promise((resolve) => {
-    stream.on("end", resolve);
-  });
-
-  const result = await exec.inspect();
-
-  if (result.ExitCode !== 0) {
-    const message = `Command failed: ${command.join(" ")}`;
-    console.error();
-    createDeploymentLogs({
-      deploymentId,
-      message,
-      createdBy: containerName,
+    const stream = await exec.start({
+      hijack: true,
+      Tty: true,
     });
-    throw new Error(message);
+
+    const details = await container.inspect();
+    const containerName = details.Name;
+    const deploymentId = Number(containerName.replace("/builder-", ""));
+
+    const output = new DiagnosticOutput();
+    const saveOutput = async (message: string) => {
+      if (!message) return;
+      console.log(message);
+      await createDeploymentLogs({
+        deploymentId,
+        message,
+        createdBy: containerName,
+      });
+    };
+    for await (const chunk of stream) {
+      await saveOutput(output.write(Buffer.from(chunk)).replace(/\0/g, ""));
+    }
+    await saveOutput(output.end().replace(/\0/g, ""));
+
+    const result = await exec.inspect();
+
+    if (result.ExitCode !== 0) {
+      const message = `${stage} failed (exit code ${result.ExitCode}).`;
+      console.error(message);
+      await createDeploymentLogs({
+        deploymentId,
+        message,
+        createdBy: containerName,
+      });
+      throw new Error(message);
+    }
+  } catch (error) {
+    throw safeDiagnosticError(error, stage);
   }
 }
