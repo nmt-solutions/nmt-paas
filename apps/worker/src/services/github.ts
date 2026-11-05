@@ -2,6 +2,7 @@ import { App } from "octokit";
 import { database } from "@repo/database";
 import env from "../env/vars.js";
 import { tryCatch } from "../utils/try-catch.js";
+import { registerDiagnosticSecrets } from "./diagnostics.js";
 
 const app = new App({
   appId: env.variables.GITHUB_APP_ID,
@@ -67,6 +68,7 @@ export const getUserOctokitToken = async (userId: string) => {
 
 export const getCloneUrl = async (userId: string, repo: string) => {
   const { token: octokitToken, owner } = await getUserOctokitToken(userId);
+  registerDiagnosticSecrets(octokitToken);
 
   const cloneUrl = `https://x-access-token:${octokitToken}@github.com/${owner}/${repo}.git`;
 
