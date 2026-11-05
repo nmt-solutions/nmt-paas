@@ -67,8 +67,10 @@ test(
       await import("../../worker/test/fixtures/deployment.ts");
     const dockerFixture = await deploymentFixture();
     t.after(dockerFixture.close);
-    const snapshot =
-      await dockerFixture.dependencies.getDeployment(deploymentId);
+    const snapshot = await dockerFixture.dependencies.getDeployment(
+      deploymentId,
+      userId,
+    );
     await database
       .insert(schema.Projects)
       .values({ id: 3, name: "Fixture project", userId, createdBy: userId });
@@ -104,7 +106,7 @@ test(
       userId,
       createdBy: userId,
     });
-    const { getDeployment, updateDeployment } =
+    const { getDeployment, updateDeployment, saveDeploymentCleanup } =
       await import("@repo/database/access-layer/deployment.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
@@ -115,6 +117,7 @@ test(
     const persistence = {
       getDeployment,
       updateDeployment,
+      saveDeploymentCleanup,
       createDeploymentLogs,
     };
     const execute = createDeploymentExecutor({

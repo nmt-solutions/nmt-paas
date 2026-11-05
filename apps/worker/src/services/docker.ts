@@ -4,13 +4,17 @@ import env from "../env/vars.js";
 import os from "os";
 import { createDockerCommandAdapter } from "../deployment/docker-command-adapter.js";
 
-export const getDocker = async () => {
+export const getLocalDocker = () => {
   const socketPath =
     os.platform() === "win32"
       ? "//./pipe/docker_engine"
       : "/var/run/docker.sock";
 
-  const docker = new Docker({ socketPath });
+  return new Docker({ socketPath });
+};
+
+export const getDocker = async () => {
+  const docker = getLocalDocker();
 
   await docker.checkAuth({
     username: env.variables.GITHUB_USER_NAME,

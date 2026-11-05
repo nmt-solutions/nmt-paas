@@ -116,6 +116,7 @@ before(async () => {
             branch: "main",
             commit: "fixture-commit",
             status: "success",
+            cleanup: null,
             env: "production",
             userId: "fixture-owner",
             resourceStatus: "active",

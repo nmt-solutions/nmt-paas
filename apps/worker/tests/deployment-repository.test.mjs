@@ -99,7 +99,7 @@ test(
     const schema = await import("@repo/database/schema");
     const { getUserApp, updateApp } =
       await import("@repo/database/access-layer/apps.dal");
-    const { getDeployment, updateDeployment } =
+    const { getDeployment, updateDeployment, saveDeploymentCleanup } =
       await import("@repo/database/access-layer/deployment.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
@@ -189,6 +189,7 @@ test(
           ...fixture.dependencies,
           getDeployment,
           updateDeployment,
+          saveDeploymentCleanup,
           createDeploymentLogs,
           getCloneUrl,
         };
@@ -222,6 +223,7 @@ test(
           ...fixture.dependencies,
           getDeployment,
           updateDeployment,
+          saveDeploymentCleanup,
           createDeploymentLogs,
           getCloneUrl,
         };
@@ -268,6 +270,7 @@ test(
             ...fixture.dependencies,
             getDeployment,
             updateDeployment,
+            saveDeploymentCleanup,
             createDeploymentLogs,
             getCloneUrl,
           })({ userId, deploymentId: deployment.id }),
@@ -307,6 +310,7 @@ test(
             ...fixture.dependencies,
             getDeployment,
             updateDeployment,
+            saveDeploymentCleanup,
             createDeploymentLogs,
             getCloneUrl,
           })({ userId, deploymentId: deployment.id }),

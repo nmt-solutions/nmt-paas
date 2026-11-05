@@ -1,5 +1,9 @@
 import { PassThrough } from "node:stream";
 import type Docker from "dockerode";
+import type {
+  DeploymentCleanup,
+  DeploymentCleanupArtifact,
+} from "@repo/database/schema";
 import {
   DiagnosticOutput,
   redactDiagnostic,
@@ -8,7 +12,11 @@ import {
   withDeploymentDiagnostics,
 } from "../services/diagnostics.js";
 
-export type DeploymentRequest = { userId: string; deploymentId: number };
+export type DeploymentRequest = {
+  userId: string;
+  deploymentId: number;
+  action?: "cleanup";
+};
 
 class DeploymentNotFoundError extends Error {
   constructor() {
@@ -26,6 +34,9 @@ type DeploymentStatus =
   | "failed";
 
 type DeploymentSnapshot = {
+  status?: string;
+  userId?: string;
+  cleanup?: DeploymentCleanup | null;
   appId: number;
   repoId: number;
   branch: string;
@@ -50,6 +61,11 @@ export type DeploymentExecutionDependencies = {
     id: number,
     userId: string,
   ) => Promise<DeploymentSnapshot | undefined>;
+  saveDeploymentCleanup: (
+    id: number,
+    cleanup: DeploymentCleanup,
+    userId: string,
+  ) => Promise<unknown>;
   updateDeployment: (
     params: { id: number; status: DeploymentStatus },
     userId: string,
@@ -60,6 +76,7 @@ export type DeploymentExecutionDependencies = {
     createdBy: string;
   }) => Promise<unknown>;
   getDocker: () => Promise<Docker>;
+  getCleanupDocker?: () => Promise<Docker>;
   // Register acquisition synchronously, before starting or preparing the builder.
   createBuilderContainer: (
     deploymentId: number,
@@ -95,9 +112,11 @@ type DeploymentContainer = {
  */
 export const createDeploymentExecutor = ({
   getDeployment,
+  saveDeploymentCleanup,
   updateDeployment,
   createDeploymentLogs,
   getDocker,
+  getCleanupDocker = getDocker,
   createBuilderContainer,
   executeCommand,
   getCloneUrl,
@@ -369,42 +388,179 @@ export const createDeploymentExecutor = ({
     }
   };
 
-  const cleanupFailedArtifact = async (
+  const notFound = (error: unknown) =>
+    typeof error === "object" &&
+    error !== null &&
+    "statusCode" in error &&
+    error.statusCode === 404;
+
+  const cleanupArtifacts = async (
+    docker: Docker,
+    deployment: DeploymentSnapshot,
     deploymentId: number,
     userId: string,
-    artifact: string,
-    remove: () => Promise<unknown>,
-  ) => {
-    try {
-      await remove();
-      return true;
-    } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "statusCode" in error &&
-        error.statusCode === 404
+    targets: DeploymentCleanupArtifact[] = [],
+  ): Promise<DeploymentCleanup> => {
+    const cleanup: DeploymentCleanup = structuredClone(
+      deployment.cleanup ?? { status: "complete", artifacts: [] },
+    );
+    const persist = async () => {
+      cleanup.status = cleanup.artifacts.some(
+        (a) => a.status === "pending" || a.status === "failed",
       )
-        return true;
+        ? "pending"
+        : "complete";
+      try {
+        await saveDeploymentCleanup(deploymentId, cleanup, userId);
+      } catch {
+        // Driver errors can embed the entire ledger as SQL parameters. Keep
+        // those internals out of persisted diagnostics and subsequent ledgers.
+        throw new Error("Cleanup outcome could not be saved");
+      }
+      deployment.cleanup = structuredClone(cleanup);
+    };
+    for (const target of targets) {
+      if (
+        !cleanup.artifacts.some(
+          (a) => a.id === target.id && a.kind === target.kind,
+        )
+      )
+        cleanup.artifacts.push(target);
+    }
+    // Durable intent precedes every removal, including the first one. A crash
+    // after Docker removes a target is recovered by the target's 404 response.
+    try {
+      await persist();
+    } catch (error) {
       const message = safeDiagnosticError(
         error,
-        `Cleanup failed for ${artifact}`,
+        "Cleanup failed to save removal intent",
       ).message;
+      await createDeploymentLogs({
+        deploymentId,
+        createdBy: userId,
+        message,
+      }).catch(() => {});
       console.error(message);
+      return { ...cleanup, status: "pending" };
+    }
+    for (const target of cleanup.artifacts) {
+      if (target.status === "complete" || target.status === "preserved")
+        continue;
       try {
+        let details:
+          | Docker.ImageInspectInfo
+          | Docker.ContainerInspectInfo
+          | undefined;
+        try {
+          details =
+            target.kind === "image"
+              ? await docker.getImage(target.id).inspect()
+              : await docker.getContainer(target.id).inspect();
+        } catch (error) {
+          if (!notFound(error)) throw error;
+        }
+        if (details) {
+          const labels: Record<string, string> = details.Config?.Labels ?? {};
+          if (
+            !Object.keys(target.labels).length ||
+            Object.entries(target.labels).some(
+              ([key, value]) => labels[key] !== value,
+            )
+          ) {
+            throw new Error(
+              "Artifact ownership no longer matches; resource preserved",
+            );
+          }
+          if (target.kind === "prior runtime") {
+            if (
+              target.labels["nmt.app-id"] !== String(deployment.appId) ||
+              !target.replacementId ||
+              target.replacementId === target.id
+            ) {
+              throw new Error(
+                "Cannot verify superseded runtime ownership; resource preserved",
+              );
+            }
+            const replacement = await docker
+              .getContainer(target.replacementId)
+              .inspect();
+            if (
+              !replacement.State.Running ||
+              replacement.Config.Labels?.["nmt.app-id"] !==
+                String(deployment.appId) ||
+              replacement.Config.Labels?.["nmt.deployment-id"] !==
+                String(deploymentId)
+            ) {
+              throw new Error(
+                "Replacement is not running with the expected identity; runtime preserved",
+              );
+            }
+          } else if (
+            target.labels["nmt.deployment-id"] !== String(deploymentId) ||
+            target.labels["nmt.artifact"] !==
+              (target.kind === "image"
+                ? "image"
+                : target.kind === "builder"
+                  ? "builder"
+                  : "runtime")
+          ) {
+            throw new Error(
+              "Cannot verify deployment artifact ownership; resource preserved",
+            );
+          }
+          const running =
+            target.kind === "runtime" &&
+            (deployment.status === "success" ||
+              (details as Docker.ContainerInspectInfo).State.Running);
+          const usedImage =
+            target.kind === "image" &&
+            (deployment.status === "success" ||
+              (await docker.listContainers({ all: true })).some(
+                (c) =>
+                  c.State === "running" &&
+                  c.Labels?.["nmt.app-id"] === String(deployment.appId) &&
+                  c.Labels?.["nmt.deployment-id"] === String(deploymentId),
+              ));
+          if (running || usedImage) {
+            // A deployment retry can adopt a once-failed runtime/image. Its
+            // earlier failure-cleanup intent must never delete that runtime.
+            target.status = "preserved";
+          } else {
+            try {
+              if (target.kind === "image")
+                await docker.getImage(target.id).remove();
+              else await docker.getContainer(target.id).remove({ force: true });
+            } catch (error) {
+              if (!notFound(error)) throw error;
+            }
+            target.status = "complete";
+          }
+        } else target.status = "complete";
+        delete target.error;
+        await persist();
+      } catch (error) {
+        target.status = "failed";
+        target.error = safeDiagnosticError(
+          error,
+          `Cleanup failed for ${target.kind} ${target.id}`,
+        ).message;
+        console.error(target.error);
+        // Status, cleanup and log writes are independent outcomes. A failed
+        // acknowledgement leaves the persisted pending intent safe to retry.
+        await persist().catch((writeError) =>
+          console.error(
+            safeDiagnosticError(writeError, "Failed to save cleanup outcome"),
+          ),
+        );
         await createDeploymentLogs({
           deploymentId,
           createdBy: userId,
-          message,
-        });
-      } catch (logError) {
-        console.error(
-          "Failed to save cleanup diagnostic:",
-          safeDiagnosticError(logError),
-        );
+          message: target.error,
+        }).catch((logError) => console.error(safeDiagnosticError(logError)));
       }
-      return false;
     }
+    return cleanup;
   };
 
   const deploy = async (
@@ -487,28 +643,42 @@ export const createDeploymentExecutor = ({
         deploymentId,
         appDomain,
       );
-      // Replacement and retirement stay within the same app lock.
-      const removals = oldContainers.map((container) =>
-        cleanupFailedArtifact(
-          deploymentId,
-          userId,
-          `prior runtime ${container.Id}`,
-          () => docker.getContainer(container.Id).remove({ force: true }),
+      // Replacement retirement and cleanup recovery share this app's lock.
+      const targets: DeploymentCleanupArtifact[] = oldContainers.map((old) => ({
+        id: old.Id,
+        kind: "prior runtime",
+        labels: Object.fromEntries(
+          Object.entries(old.Labels ?? {}).filter(([key]) =>
+            key.startsWith("nmt."),
+          ),
         ),
-      );
-      if (builderContainer) {
-        const builder = builderContainer;
-        removals.push(
-          cleanupFailedArtifact(
+        replacementId: container.id,
+        status: "pending",
+      }));
+      if (builderContainer)
+        targets.push({
+          id: builderContainer.id,
+          kind: "builder",
+          labels: {
+            "nmt.deployment-id": String(deploymentId),
+            "nmt.artifact": "builder",
+          },
+          status: "pending",
+        });
+      if (
+        (
+          await cleanupArtifacts(
+            docker,
+            deployment,
             deploymentId,
             userId,
-            `builder ${builder.id}`,
-            () => builder.remove({ force: true }),
-          ),
+            targets,
+          )
+        ).status === "pending"
+      ) {
+        throw new Error(
+          "Artifact cleanup incomplete; retry cleanup without redeploying",
         );
-      }
-      if ((await Promise.all(removals)).some((removed) => !removed)) {
-        throw new Error("Artifact cleanup incomplete; retry this deployment");
       }
       void Promise.allSettled([
         streamDeploymentLogs(docker, container, deploymentId, userId),
@@ -834,38 +1004,55 @@ export const createDeploymentExecutor = ({
        * After start, retain recoverable artifacts even if persistence fails.
        */
       if (!deploymentContainerStarted) {
-        if (deploymentContainer) {
-          const container = deploymentContainer;
-          await cleanupFailedArtifact(
+        const targets: DeploymentCleanupArtifact[] = [];
+        if (deploymentContainer)
+          targets.push({
+            id: deploymentContainer.id,
+            kind: "runtime",
+            labels: {
+              "nmt.app-id": String(deployment.appId),
+              "nmt.deployment-id": String(deploymentId),
+              "nmt.artifact": "runtime",
+            },
+            status: "pending",
+          });
+        if (builderContainer)
+          targets.push({
+            id: builderContainer.id,
+            kind: "builder",
+            labels: {
+              "nmt.deployment-id": String(deploymentId),
+              "nmt.artifact": "builder",
+            },
+            status: "pending",
+          });
+        if (committedImageId)
+          targets.push({
+            id: committedImageId,
+            kind: "image",
+            labels: {
+              "nmt.deployment-id": String(deploymentId),
+              "nmt.artifact": "image",
+            },
+            status: "pending",
+          });
+        if (targets.length)
+          await cleanupArtifacts(
+            docker,
+            deployment,
             deploymentId,
             userId,
-            `runtime ${container.id}`,
-            () => container.remove({ force: true }),
+            targets,
           );
-        }
-        if (builderContainer) {
-          const container = builderContainer;
-          await cleanupFailedArtifact(
-            deploymentId,
-            userId,
-            `builder ${container.id}`,
-            () => container.remove({ force: true }),
-          );
-        }
-        if (committedImageId) {
-          const image = docker.getImage(committedImageId);
-          await cleanupFailedArtifact(
-            deploymentId,
-            userId,
-            `image ${committedImageId}`,
-            () => image.remove(),
-          );
-        }
       }
     }
   };
 
-  return async ({ userId, deploymentId }: DeploymentRequest): Promise<void> =>
+  return async ({
+    userId,
+    deploymentId,
+    action,
+  }: DeploymentRequest): Promise<DeploymentCleanup | void> =>
     withDeploymentDiagnostics(async () => {
       registerDiagnosticSecrets(registry.password);
 
@@ -921,9 +1108,40 @@ export const createDeploymentExecutor = ({
         deployment = await getDeployment(deploymentId, userId);
         if (!deployment) throw new DeploymentNotFoundError();
       } catch (failure) {
+        if (action === "cleanup") throw safeDiagnosticError(failure);
         return reportFailure(failure);
       }
       const attempt = async () => {
+        if (action === "cleanup") {
+          try {
+            // Read after taking the lock so recovery never overwrites a newer
+            // attempt's ledger. This mode performs no build/start/status writes.
+            const current = await getDeployment(deploymentId, userId);
+            if (!current || current.userId !== userId)
+              throw new Error("Deployment not found for cleanup owner");
+            if (!current.cleanup)
+              throw new Error(
+                "No recorded cleanup; recover deployment execution before retrying cleanup",
+              );
+            const cleanup = await cleanupArtifacts(
+              await getCleanupDocker(),
+              current,
+              deploymentId,
+              userId,
+            );
+            await createDeploymentLogs({
+              deploymentId,
+              createdBy: userId,
+              message:
+                cleanup.status === "complete"
+                  ? "Cleanup complete. Runtime-start outcome unchanged."
+                  : "Cleanup incomplete; retry cleanup after resolving the removal error. Runtime-start outcome unchanged.",
+            });
+            return cleanup;
+          } catch (failure) {
+            throw safeDiagnosticError(failure);
+          }
+        }
         let runtimeStarted = false;
         try {
           // Recheck inside the existing app turn, before touching Docker.
