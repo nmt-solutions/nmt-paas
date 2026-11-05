@@ -557,6 +557,44 @@ test(
 );
 
 test(
+  "recovery preserves the integrated eligibility rule for pending work",
+  { timeout: 20_000 },
+  async () => {
+    const caller = await owner("retired-pending-owner");
+    hostMode = "unavailable";
+    const result = await caller.deployment.deploy({
+      ...input,
+      submissionId: randomUUID(),
+    });
+    await fixtures.query(
+      `UPDATE "Projects" SET "resourceStatus" = 'inactive' WHERE id = $1`,
+      [result.projectId],
+    );
+    hostMode = "available";
+    const before = hostRequests;
+    const recovery = await startRecovery();
+    try {
+      await delay(6_000);
+      assert.equal(hostRequests, before);
+      assert.equal(
+        received.filter(
+          ({ deploymentId }) => deploymentId === result.deploymentId,
+        ).length,
+        0,
+      );
+      assert.equal(
+        await caller.deployment.submission({
+          submissionId: result.submissionId,
+        }),
+        null,
+      );
+    } finally {
+      await stop(recovery);
+    }
+  },
+);
+
+test(
   "the owner UI reuses the submission after a lost response and remount",
   { timeout: 25_000 },
   async () => {

@@ -388,6 +388,35 @@ test("owners can find accepted work by submission identity without exposing its 
   );
 });
 
+test("replaying a saved submission preserves the integrated active-resource rule", async () => {
+  const caller = await owner("retired-submission");
+  const input = {
+    ...importInput,
+    submissionId: "3e8f53a0-fb71-49a7-b49a-27132bfd94b6",
+  };
+  hostUnavailable = true;
+  try {
+    const result = await caller.deployment.deploy(input);
+    await fixtures.query(
+      `UPDATE "Projects" SET "resourceStatus" = 'inactive' WHERE id = $1`,
+      [result.projectId],
+    );
+    assert.equal(
+      await caller.deployment.submission({ submissionId: input.submissionId }),
+      null,
+    );
+    await assert.rejects(caller.deployment.deploy(input), {
+      code: "NOT_FOUND",
+    });
+    await assert.rejects(
+      caller.deployment.dispatches({ appId: result.appId }),
+      { code: "NOT_FOUND" },
+    );
+  } finally {
+    hostUnavailable = false;
+  }
+});
+
 test("simultaneous duplicate imports share one complete admission", async () => {
   const caller = await owner("concurrent-submission");
   const input = {

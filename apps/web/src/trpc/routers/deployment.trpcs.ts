@@ -14,6 +14,7 @@ import {
   initializeNewProjectAndDeploy,
 } from "@/services/projects";
 import { TRPCError } from "@trpc/server";
+import { getDeployment } from "@repo/database/access-layer/deployment.dal";
 import {
   deploymentSubmission,
   dispatchSubmission,
@@ -29,7 +30,10 @@ export const deploymentRouter = createTRPCRouter({
         ctx.userInfo.user.id,
         input.submissionId,
       );
-      return accepted ? submissionResult(accepted) : null;
+      return accepted &&
+        (await getDeployment(accepted.deployment.id, ctx.userInfo.user.id))
+        ? submissionResult(accepted)
+        : null;
     }),
   dispatches: authenticatedProcedure
     .input(z.object({ appId: z.number().int().positive() }))

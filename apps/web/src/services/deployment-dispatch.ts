@@ -8,6 +8,7 @@ import {
   type Submission,
 } from "@repo/database/access-layer/deployment-dispatch.dal";
 import { TRPCError } from "@trpc/server";
+import { getDeployment } from "@repo/database/access-layer/deployment.dal";
 import cpApiClient from "./cp-api-client";
 import env from "@/env/vars";
 
@@ -32,6 +33,11 @@ export async function existingSubmission(submission: Submission) {
   );
   if (existing && existing.dispatch.requestHash !== submission.requestHash)
     throw admissionError(new SubmissionConflict());
+  if (
+    existing &&
+    !(await getDeployment(existing.deployment.id, submission.userId))
+  )
+    throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
   return existing;
 }
 
@@ -51,6 +57,8 @@ export async function dispatchSubmission(submission: Submission) {
   );
   if (!accepted)
     throw new TRPCError({ code: "NOT_FOUND", message: "Submission not found" });
+  if (!(await getDeployment(accepted.deployment.id, submission.userId)))
+    throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
   await recoverPendingDispatches(accepted.deployment.id).catch(() => undefined);
   // Confirmation persistence can fail after enqueue. Read only durable state;
   // the lease will expire and the existing producer identity deduplicates retry.
@@ -98,6 +106,10 @@ async function recoverPendingDispatches(deploymentId?: number) {
     claimed.map(async (dispatch) => {
       let state: "pending" | "dispatched" | "rejected" = "pending";
       try {
+        if (!(await getDeployment(dispatch.deploymentId, dispatch.userId))) {
+          await finishDispatch(dispatch, "rejected");
+          return;
+        }
         const response = await cpApiClient.queueDeployment(
           dispatch.deploymentId,
           dispatch.userId,

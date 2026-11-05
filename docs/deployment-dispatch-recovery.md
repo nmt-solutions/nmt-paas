@@ -84,6 +84,11 @@ overwriting another attempt. A crash or confirmation-write failure leaves the
 lease discoverable and retryable when it expires. Temporary host/Redis errors,
 timeouts, lost responses, 401/403 configuration failures and malformed responses
 remain pending. A completed failed handoff is due again after five seconds.
+Replay, owner status and recovery reuse the integrated active-resource policy
+from #20. A retired or otherwise ineligible deployment is not dispatched; its
+intent becomes rejected and is excluded from owner lookup. The worker retains
+its own eligibility checks for a race after dispatch. Re-arming a rejected intent
+does not override eligibility.
 These are dispatch retries; the existing queue's three attempts, exponential
 2/4-second delays, pause behavior and retention policy are unchanged.
 

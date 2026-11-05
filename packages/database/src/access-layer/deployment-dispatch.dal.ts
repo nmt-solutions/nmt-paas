@@ -66,6 +66,9 @@ export async function getAppDispatches(appId: number, userId: string) {
       and(
         eq(DeploymentDispatches.userId, userId),
         eq(Deployments.appId, appId),
+        eq(Deployments.resourceStatus, "active"),
+        eq(Deployments.userId, userId),
+        eq(Deployments.createdBy, userId),
       ),
     )
     .orderBy(sql`${DeploymentDispatches.deploymentId} DESC`)
