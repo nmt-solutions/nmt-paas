@@ -268,11 +268,14 @@ func dockerHTTPClient() *http.Client {
 	}}}
 }
 func dockerRequest(ctx context.Context, method, path string) (*http.Response, error) {
+	return dockerRequestWithClient(dockerHTTPClient(), ctx, method, path)
+}
+func dockerRequestWithClient(client *http.Client, ctx context.Context, method, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	result, err := dockerHTTPClient().Do(req)
+	result, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -391,41 +394,55 @@ func deleteDockerResource(c *gin.Context) {
 }
 
 func streamRuntimeLogs(c *gin.Context) {
-	value, err := strconv.ParseFloat(c.Param("deploymentId"), 64)
-	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
-		c.JSON(400, response(400, 400, "Invalid deployment ID.", nil, nil))
-		return
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(200)
-	c.Writer.Flush()
-	var lock sync.Mutex
-	write := func(message string) {
-		lock.Lock()
-		defer lock.Unlock()
-		_, _ = c.Writer.WriteString(message)
-		c.Writer.Flush()
-	}
-	write(": connected\n\n")
-	logs, err := dockerRequest(c.Request.Context(), "GET", fmt.Sprintf("/containers/deployment-%d/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=100", int64(value)))
-	if err != nil {
-		write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
-		return
-	}
-	defer logs.Body.Close()
-	heartbeat := time.NewTicker(15 * time.Second)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for range heartbeat.C {
-			write(": heartbeat\n\n")
+	runtimeLogsHandler(dockerHTTPClient(), 15*time.Second)(c)
+}
+func runtimeLogsHandler(client *http.Client, heartbeatInterval time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer client.CloseIdleConnections()
+		value, err := strconv.ParseFloat(c.Param("deploymentId"), 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
+			c.JSON(400, response(400, 400, "Invalid deployment ID.", nil, nil))
+			return
 		}
-	}()
-	defer func() { heartbeat.Stop(); <-done }()
-	streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache, no-transform")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(200)
+		c.Writer.Flush()
+		var lock sync.Mutex
+		write := func(message string) {
+			lock.Lock()
+			defer lock.Unlock()
+			_, _ = c.Writer.WriteString(message)
+			c.Writer.Flush()
+		}
+		write(": connected\n\n")
+		logs, err := dockerRequestWithClient(client, c.Request.Context(), "GET", fmt.Sprintf("/containers/deployment-%d/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=100", int64(value)))
+		if err != nil {
+			write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
+			return
+		}
+		defer logs.Body.Close()
+		heartbeat := time.NewTicker(heartbeatInterval)
+		stopHeartbeat := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case <-heartbeat.C:
+					write(": heartbeat\n\n")
+				case <-stopHeartbeat:
+					return
+				case <-c.Request.Context().Done():
+					return
+				}
+			}
+		}()
+		defer func() { heartbeat.Stop(); close(stopHeartbeat); <-done }()
+		streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+	}
 }
 func streamDockerLogs(reader io.Reader, onLine func(string)) {
 	for {
