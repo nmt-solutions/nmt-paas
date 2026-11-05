@@ -182,3 +182,75 @@ func TestRuntimeLogsEndAfterInterruptedDockerConnection(t *testing.T) {
 		t.Fatalf("interrupted upstream did not end subscription within 1s: %v", err)
 	}
 }
+
+func TestRuntimeLogsReconstructFragmentedText(t *testing.T) {
+	host := logsHost(t, func(w http.ResponseWriter, r *http.Request) {
+		text := []byte("hello 🌍 \"quoted\"\n\nlast line")
+		stderr := func(text string) []byte { frame := logFrame(text); frame[0] = 2; return frame }
+		frames := append(logFrame(string(text[:8])), stderr("stderr ")...)
+		frames = append(frames, logFrame(string(text[8:18]))...)
+		frames = append(frames, stderr("finished\n")...)
+		frames = append(frames, logFrame(string(text[18:]))...)
+		for _, b := range frames {
+			w.Write([]byte{b})
+			w.(http.Flusher).Flush()
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	output, err := io.ReadAll(openLogs(t, host, ctx).Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "data: \"stderr finished\"\n\ndata: \"hello 🌍 \\\"quoted\\\"\"\n\ndata: \"\"\n\ndata: \"last line\"\n\n"
+	if !strings.Contains(string(output), want) {
+		t.Fatalf("corrupted runtime text: %s", output)
+	}
+}
+
+func TestRuntimeLogsIdentifyRuntimeAndOutcome(t *testing.T) {
+	for _, scenario := range []string{"eof", "error", "open-error", "truncated"} {
+		t.Run(scenario, func(t *testing.T) {
+			host := logsHost(t, func(w http.ResponseWriter, r *http.Request) {
+				if scenario == "open-error" {
+					w.WriteHeader(404)
+					return
+				}
+				if scenario == "truncated" {
+					w.Write(logFrame("incomplete")[:10])
+					return
+				}
+				w.Write(logFrame("runtime text\n"))
+				if scenario == "error" {
+					w.(http.Flusher).Flush()
+					connection, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					connection.Close()
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			body, err := io.ReadAll(openLogs(t, host, ctx).Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := string(body)
+			if !strings.Contains(output, "event: runtime\ndata: {\"deploymentId\":7}\n\n") {
+				t.Fatalf("missing runtime identity: %s", output)
+			}
+			reason := "eof"
+			if scenario != "eof" {
+				reason = "error"
+			}
+			if !strings.HasSuffix(output, "event: end\ndata: {\"reason\":\""+reason+"\"}\n\n") {
+				t.Fatalf("missing termination outcome: %s", output)
+			}
+			if strings.Contains(output, "event: error\n") != (reason == "error") {
+				t.Fatalf("incorrect error meaning: %s", output)
+			}
+		})
+	}
+}

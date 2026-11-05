@@ -26,10 +26,10 @@ async function within<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-function frame(line: string) {
+function frame(line: string | Buffer, stream = 1) {
   const payload = Buffer.from(line);
   const header = Buffer.alloc(8);
-  header[0] = 1;
+  header[0] = stream;
   header.writeUInt32BE(payload.length, 4);
   return Buffer.concat([header, payload]);
 }
@@ -53,6 +53,29 @@ before(async () => {
     dockerEvents.emit(`open:${id}`);
     if (id === "2") return; // Docker has not returned its response headers yet.
     res.writeHead(200, { "Content-Type": "application/vnd.docker.raw-stream" });
+    if (id === "10") {
+      res.end(frame("unfinished frame").subarray(0, 10));
+      return;
+    }
+    if (id === "9") {
+      const text = Buffer.from('hello 🌍 "quoted"\n\nlast line');
+      const frames = Buffer.concat([
+        frame(text.subarray(0, 8)),
+        frame("stderr ", 2),
+        frame(text.subarray(8, 18)),
+        frame("finished\n", 2),
+        frame(text.subarray(18)),
+      ]);
+      // Split Docker headers, payloads and the UTF-8 character on the wire.
+      void (async () => {
+        for (const byte of frames) {
+          res.write(Buffer.from([byte]));
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        res.end();
+      })();
+      return;
+    }
     if (id !== "1") {
       res.write(frame("still running\n"));
       if (id === "8") setImmediate(() => res.destroy());
@@ -109,7 +132,7 @@ test("host returns runtime output and closes the HTTP subscription after Docker 
   assert.equal(response.headers.get("content-type"), "text/event-stream");
   assert.equal(
     await response.text(),
-    ': connected\n\ndata: "hello from runtime"\n\n',
+    ': connected\n\nevent: runtime\ndata: {"deploymentId":1}\n\ndata: "hello from runtime"\n\nevent: end\ndata: {"reason":"eof"}\n\n',
   );
 });
 
@@ -144,4 +167,47 @@ test("an interrupted Docker connection ends its HTTP subscription", async (t) =>
     signal: AbortSignal.timeout(1000),
   });
   await response.text();
+});
+
+test("fragmented Docker frames preserve UTF-8, per-stream partial lines and the final unterminated line", async () => {
+  const response = await fetch(`${apiUrl}/api/v1/logs/stream/9`, {
+    headers: { Authorization: "Bearer fixture-log-key" },
+    signal: AbortSignal.timeout(3000),
+  });
+  const output = await response.text();
+  assert.deepEqual(
+    output.split("\n").filter((line) => line.startsWith('data: "')),
+    [
+      'data: "stderr finished"',
+      'data: "hello 🌍 \\"quoted\\""',
+      'data: ""',
+      'data: "last line"',
+    ],
+  );
+});
+
+test("a subscription identifies its runtime and distinguishes clean EOF from a Docker failure", async () => {
+  for (const [id, reason] of [
+    [1, "eof"],
+    [8, "error"],
+    [10, "error"],
+  ] as const) {
+    const response = await fetch(`${apiUrl}/api/v1/logs/stream/${id}`, {
+      headers: { Authorization: "Bearer fixture-log-key" },
+      signal: AbortSignal.timeout(1000),
+    });
+    const output = await response.text();
+    assert.match(
+      output,
+      new RegExp(`event: runtime\\ndata: \\{"deploymentId":${id}\\}\\n\\n`),
+    );
+    assert.ok(output.endsWith(`event: end\ndata: {"reason":"${reason}"}\n\n`));
+    assert.equal(output.includes("event: error\n"), reason === "error");
+    if (reason === "error") {
+      assert.match(
+        output,
+        /event: error\ndata: \{"message":"Failed to read deployment logs\."\}/,
+      );
+    }
+  }
 });
