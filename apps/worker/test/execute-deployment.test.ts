@@ -849,3 +849,56 @@ test("retirement preserves an explicitly different app even when its routing rul
     "unrelated-image",
   );
 });
+
+test("an unavailable inspection preserves the identified running runtime for retry", async (t) => {
+  const failInspect = {
+    "deployment-42": "fixture inspection unavailable fixture-pat",
+  };
+  const fixture = await deploymentFixture({ failInspect });
+  t.after(fixture.close);
+  const runtime = await fixture.docker.createContainer({
+    name: "deployment-42",
+    Image: "ghcr.io/fixture/42:42",
+    Labels: { "nmt.app-id": "7", "nmt.deployment-id": "42" },
+  });
+  await runtime.start();
+  const execute = createDeploymentExecutor(fixture.dependencies);
+  await assert.rejects(
+    execute({ userId, deploymentId }),
+    /fixture inspection unavailable \[REDACTED\]/,
+  );
+  assert.equal(
+    (await fixture.docker.listContainers({ all: true })).find(
+      (container) => container.Id === runtime.id,
+    )?.State,
+    "running",
+  );
+  Reflect.deleteProperty(failInspect, "deployment-42");
+  await execute({ userId, deploymentId });
+  assert.equal((await runtime.inspect()).State.Running, true);
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+});
+
+test("an image tag without this deployment's identity is preserved", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  fixture.images.set("ghcr.io/fixture/42:42", {
+    id: "foreign-image",
+    changes: [],
+  });
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Image name belongs to an unidentified deployment/,
+  );
+  assert.equal(
+    (await fixture.docker.getImage("ghcr.io/fixture/42:42").inspect()).Id,
+    "foreign-image",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});

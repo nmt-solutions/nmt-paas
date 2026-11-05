@@ -445,8 +445,15 @@ export const createDeploymentExecutor = ({
     let deploymentContainer: import("dockerode").Container | undefined;
 
     let deploymentContainerStarted = false;
+    let environmentLoaded = false;
 
     const finishRuntime = async (container: Docker.Container) => {
+      // Recovered attempts have a fresh diagnostic scope. Load configured
+      // secrets before attaching runtime output even when no build was needed.
+      if (!environmentLoaded) {
+        await fetchEnvVars(deployment.app!.projectId, deployment.env);
+        environmentLoaded = true;
+      }
       await updateDeployment({ id: deploymentId, status: "success" }, userId);
       const startMessage = `Container started for ${appName} at ${appDomain}. Application readiness has not been checked.`;
       await createDeploymentLogs({
@@ -530,6 +537,8 @@ export const createDeploymentExecutor = ({
           throw new Error("Image name belongs to an unidentified deployment");
         }
         committedImageId = image.Id;
+        await fetchEnvVars(deployment.app.projectId, deployment.env);
+        environmentLoaded = true;
       } catch (error) {
         if (
           !(
@@ -650,6 +659,7 @@ export const createDeploymentExecutor = ({
           deployment.app!.projectId,
           deployment.env,
         );
+        environmentLoaded = true;
 
         await executeCommand(
           builderContainer,

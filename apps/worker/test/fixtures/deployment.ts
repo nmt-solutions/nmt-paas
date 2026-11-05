@@ -19,6 +19,7 @@ export async function deploymentFixture({
   failRemove = {},
   disappearOnRemove = [],
   beforeRemove,
+  failInspect = {},
 }: {
   failCommand?: string;
   source?: {
@@ -34,6 +35,7 @@ export async function deploymentFixture({
   failRemove?: Record<string, string>;
   disappearOnRemove?: string[];
   beforeRemove?: (id: string) => Promise<void>;
+  failInspect?: Record<string, string>;
 } = {}) {
   const containers = new Map([
     [
@@ -250,12 +252,14 @@ export async function deploymentFixture({
         container.State = "running";
         return send(204);
       }
-      if (match[2] === "json")
+      if (match[2] === "json") {
+        if (failInspect[id]) return send(500, { message: failInspect[id] });
         return send(200, {
           Name: container.Names[0],
           State: { Running: container.State === "running" },
           Config: configurations.get(id),
         });
+      }
       if (match[2] === "logs") {
         response.writeHead(200, {
           "Content-Type": "application/vnd.docker.raw-stream",

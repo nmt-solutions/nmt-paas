@@ -299,7 +299,7 @@ test(
       createBuilderContainer: unavailableRepository,
       executeCommand: unavailableRepository,
       getCloneUrl: unavailableRepository,
-      fetchEnvVars: unavailableRepository,
+      fetchEnvVars: async () => "",
       registry: { username: "fixture", password: "fixture-only" },
     };
     await createDeploymentExecutor(dependencies)({

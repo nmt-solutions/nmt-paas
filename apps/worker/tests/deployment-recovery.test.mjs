@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createCipheriv, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -183,6 +184,26 @@ test(
       .insert(schema.GithubAppInstallations)
       .values({ installationId: 1, userId, createdBy: userId });
 
+    const iv = Buffer.alloc(12, 3);
+    const cipher = createCipheriv(
+      "aes-256-gcm",
+      Buffer.from("11".repeat(32), "hex"),
+      iv,
+    );
+    const encrypted = Buffer.concat([
+      cipher.update("fixture-runtime-secret"),
+      cipher.final(),
+    ]);
+    await database.insert(schema.EnvVars).values({
+      projectId: project.id,
+      env: "production",
+      key: "APP_PASSWORD",
+      encryptedValue: [iv, cipher.getAuthTag(), encrypted]
+        .map((part) => part.toString("base64"))
+        .join(":"),
+      createdBy: userId,
+    });
+
     let docker;
     mock.module("dockerode", {
       defaultExport: class {
@@ -233,7 +254,17 @@ test(
             userId,
             createdBy: userId,
           });
-          const fixture = await deploymentFixture();
+          const fixture = await deploymentFixture({
+            source: {
+              rootDirectory: "/app",
+              head: "1234567890abcdef1234567890abcdef12345678",
+              cloneUrl: "https://github.com/fixture/repo.git",
+              commits: {
+                "1234567890abcdef1234567890abcdef12345678":
+                  "runtime boot fixture-runtime-secret",
+              },
+            },
+          });
           t.after(fixture.close);
           docker = fixture.docker;
           // Real PostgreSQL rejects the selected write until the test restores it.
@@ -332,6 +363,18 @@ test(
             ["deployment-42", "unrelated"],
           );
           assert.deepEqual(workerErrors, []);
+          let runtimeLogs = "";
+          for (let count = 0; count < 100; count++) {
+            runtimeLogs = (
+              await getUserApp(7, userId)
+            ).deployments[0].deploymentLogs
+              .map((log) => log.message)
+              .join("\n");
+            if (runtimeLogs.includes("runtime boot")) break;
+            await delay(10);
+          }
+          assert.match(runtimeLogs, /runtime boot \[REDACTED\]/);
+          assert.doesNotMatch(runtimeLogs, /fixture-runtime-secret/);
         },
       );
     }

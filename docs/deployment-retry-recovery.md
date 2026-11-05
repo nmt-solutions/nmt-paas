@@ -23,6 +23,9 @@ executor finds the exact deployment runtime name and checks both `nmt.app-id` an
 `nmt.deployment-id` labels. A running runtime is adopted without restarting or
 rebuilding it. An identified created/stopped runtime is started in place. A
 failed inspection preserves the existing runtime for another attempt.
+Recovery reloads configured environment secrets into its fresh diagnostic scope
+before attaching runtime output, including when it reuses an image without a
+build. If that read fails, a running runtime is preserved and the delivery retries.
 
 Only after replacement start and its confirmation writes does execution retire
 prior app runtimes. Retirement and temporary-builder removal finish inside the
