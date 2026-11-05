@@ -10,9 +10,10 @@ App detail/configuration/environment actions, app-ID redeploy, repository-based
 admission, project polling, latest-success selection, and runtime-log forwarding
 all apply this rule. Project lists omit ineligible children. App-ID requests
 return `NOT_FOUND`; latest-success returns no deployment; runtime-log requests
-return 404. Unauthenticated requests return `UNAUTHORIZED` or HTTP 401. Denials
-do not fetch GitHub configuration or contact the deployment host. The host bearer
-key remains in the server-only SDK client and is never returned to the browser.
+return 404. Unauthenticated requests return `UNAUTHORIZED` or HTTP 401. Requests
+rejected at their initial eligibility check do not fetch GitHub configuration or
+contact the deployment host. The host bearer key remains in the server-only SDK
+client and is never returned to the browser.
 
 Repository admission distinguishes an owner's retired app link from a repository
 that owner has never imported. Supplying first-import configuration for a retired
@@ -53,7 +54,7 @@ Use fixture-only credentials and a disposable loopback PostgreSQL server:
 
 ```powershell
 $env:AUTH_TEST_DATABASE_URL = 'postgresql://fixture@127.0.0.1:55460/postgres'
-npm exec turbo run build -- --filter=@repo/database --filter=@repo/api-sdk
+npm exec turbo run build -- --filter=worker... --filter=@repo/api-sdk
 npm run test:eligibility --workspace web
 npm run test:auth --workspace web
 npm test --workspace worker
