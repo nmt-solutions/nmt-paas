@@ -18,7 +18,8 @@ records the failed status and diagnostic message.
 
 The worker registers the GitHub installation token before cloning and decrypted
 project environment values before writing the environment file. Redaction is
-scoped to the deployment attempt, including its background log capture, so five
+scoped inside the shared deployment executor to the whole deployment attempt,
+including failure persistence and its background log capture, so five
 concurrent queue jobs do not share a growing global credential list. Known
 process credentials (including `GITHUB_PAT`, database URLs, private keys, API
 keys and Redis passwords) are also scrubbed. Build output and persisted runtime
