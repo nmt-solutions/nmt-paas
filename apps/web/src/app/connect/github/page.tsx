@@ -5,12 +5,16 @@ import { useTRPC } from "@/trpc/client";
 import { useMutation } from "@tanstack/react-query";
 import { GitBranch, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 
 const ConnectGithub = ({
   searchParams,
 }: {
-  searchParams: Promise<{ installation_id?: string; state?: string }>;
+  searchParams: Promise<{
+    installation_id?: string;
+    state?: string;
+    code?: string;
+  }>;
 }) => {
   const [error, setError] = useState<string | null>(null);
   const params = use(searchParams);
@@ -23,11 +27,16 @@ const ConnectGithub = ({
 
   const installationId = params.installation_id;
   const state = params.state;
+  const code = params.code;
+  const submittedCallback = useRef<string | null>(null);
 
   useEffect(() => {
-    if (installationId && state) {
+    if (installationId && state && code) {
+      const callback = JSON.stringify([installationId, state, code]);
+      if (submittedCallback.current === callback) return;
+      submittedCallback.current = callback;
       mutate(
-        { installationId, state },
+        { installationId, state, code },
         {
           onError: (err) => {
             toast({
@@ -43,9 +52,11 @@ const ConnectGithub = ({
         },
       );
     } else {
-      setError("Invalid Data From Github.");
+      setError(
+        "GitHub authorization is missing or invalid. Start Connect Github again.",
+      );
     }
-  }, [installationId, state, mutate, router]);
+  }, [installationId, state, code, mutate, router]);
 
   return (
     <main className="flex min-h-screen items-center justify-center p-6">

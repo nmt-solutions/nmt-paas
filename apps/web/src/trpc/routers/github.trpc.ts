@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { createHash, randomBytes } from "node:crypto";
 
 import z from "zod";
 
@@ -7,42 +8,40 @@ import {
   getGithubRepositories,
   getUserGithubOctokit,
   getUserGithubOctokitByInstallationId,
+  requireGithubUserAuthorization,
+  verifyGithubInstallationAccess,
 } from "@/services/github";
 import { tryCatch } from "@/utils/try-catch";
 import {
-  createUserAppInstall,
-  getUserAppInstall,
-  updateUserAppInstall,
+  startUserGithubConnection,
+  getPendingUserGithubConnection,
+  completeUserGithubConnection,
 } from "@repo/database/access-layer/github.dal";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
+
+const hashState = (state: string) =>
+  createHash("sha256").update(state).digest("hex");
+const invalidState = () =>
+  new TRPCError({
+    code: "BAD_REQUEST",
+    message:
+      "Invalid or expired GitHub connection. Start Connect Github again.",
+  });
 
 export const githubRouter = createTRPCRouter({
   connectGithub: authenticatedProcedure.mutation(async ({ ctx }) => {
     const userId = ctx.userInfo.user.id;
+    requireGithubUserAuthorization();
 
-    const appInstall = await getUserAppInstall(userId);
-
-    if (!appInstall) {
-      const appInstalls = await createUserAppInstall(userId);
-
-      const appInstall = appInstalls.at(0);
-
-      if (!appInstall) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Error occured while initiating github connect.",
-        });
-      }
-
-      return {
-        url: `https://github.com/apps/${env.variables.GITHUB_APP_SLUG}/installations/new?state=${appInstall.id}`,
-        redirect: true,
-        message: "Redirecting to Github App Install Wizard.",
-      };
-    }
+    const state = randomBytes(32).toString("hex");
+    await startUserGithubConnection(
+      userId,
+      hashState(state),
+      new Date(Date.now() + 15 * 60 * 1000),
+    );
 
     return {
-      url: `https://github.com/apps/${env.variables.GITHUB_APP_SLUG}/installations/new?state=${appInstall.id}`,
+      url: `https://github.com/apps/${env.variables.GITHUB_APP_SLUG}/installations/new?state=${state}`,
       redirect: true,
       message: "Redirecting to Github App Install Wizard.",
     };
@@ -53,32 +52,32 @@ export const githubRouter = createTRPCRouter({
       z.object({
         installationId: z
           .string()
-          .nonempty({ error: "Installation Id is required." })
-          .nonoptional({ error: "Installation Id is required." })
-          .transform((val) => Number.parseInt(val, 10)),
-        state: z
-          .string()
-          .nonempty({ error: "State is required." })
-          .nonoptional({ error: "State is required." })
-          .transform((val) => Number.parseInt(val, 10)),
+          .regex(/^[1-9]\d*$/)
+          .transform(Number)
+          .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)),
+        state: z.string().regex(/^[a-f0-9]{64}$/),
+        code: z.string().min(1).max(512),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.userInfo.user.id;
 
       const { installationId, state } = input;
-      const appInstallId = state;
+      const connectionStateHash = hashState(state);
+      if (!(await getPendingUserGithubConnection(userId, connectionStateHash)))
+        throw invalidState();
+
+      await verifyGithubInstallationAccess(installationId, input.code);
 
       const { installedApp } =
         await getUserGithubOctokitByInstallationId(installationId);
 
-      await updateUserAppInstall(
-        {
-          id: appInstallId,
-          installationId,
-        },
+      const completed = await completeUserGithubConnection(
         userId,
+        connectionStateHash,
+        installationId,
       );
+      if (!completed.length) throw invalidState();
 
       return {
         message: "Github Connected!",
