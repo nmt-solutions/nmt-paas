@@ -418,11 +418,8 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
     updateDeployment,
     createDeploymentLogs,
   };
-  const publicationPersistence =
-    await import("@repo/database/access-layer/deployment-publication.dal");
   const execute = createDeploymentExecutor({
     ...docker.dependencies,
-    ...publicationPersistence,
     ...persistence,
     ...createDockerCommandAdapter({
       ...persistence,
@@ -562,8 +559,11 @@ test("execution discards an eligible snapshot retired before it acquires the app
   const userId = "retired-snapshot-owner";
   const resource = await resourceFixture(userId);
   let retireSnapshot = true;
+  const publicationPersistence =
+    await import("@repo/database/access-layer/deployment-publication.dal");
   const execute = createDeploymentExecutor({
     ...docker.dependencies,
+    ...publicationPersistence,
     updateDeployment,
     createDeploymentLogs,
     getDeployment: async (id, ownerId) => {
