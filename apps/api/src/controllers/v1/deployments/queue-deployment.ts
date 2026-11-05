@@ -1,6 +1,6 @@
 import z from "zod";
 import { APIHandler } from "../../../models/api-handler.model.js";
-import { deploymentQueue } from "@repo/queues";
+import { enqueueDeployment } from "@repo/queues";
 import {
   QueueDeploymentSchema,
   QueueDeploymentReqBody,
@@ -9,7 +9,7 @@ import {
 
 const queueDeployment: APIHandler<
   true,
-  ValidationErrors,
+  ValidationErrors | null,
   QueueDeploymentReqBody
 > = async (req, res) => {
   const { success, error, data } = QueueDeploymentSchema.safeParse(req.body);
@@ -28,7 +28,19 @@ const queueDeployment: APIHandler<
 
   console.log("Incoming:", data);
 
-  const job = await deploymentQueue.add("deployment-queue", data);
+  let job;
+  try {
+    job = await enqueueDeployment(data);
+  } catch {
+    res.status(503).send({
+      status: "error",
+      statusCode: 503,
+      message: "Deployment queue is unavailable.",
+      data: null,
+      errors: null,
+    });
+    return;
+  }
 
   console.log("Queued:", JSON.stringify(job.data));
 
