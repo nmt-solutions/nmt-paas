@@ -1,6 +1,9 @@
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { getAppByRepoId } from "@repo/database/access-layer/apps.dal";
+import {
+  getAppByRepoId,
+  hasUserAppForRepo,
+} from "@repo/database/access-layer/apps.dal";
 import {
   deployProject,
   initializeNewProjectAndDeploy,
@@ -132,6 +135,9 @@ export const deploymentRouter = createTRPCRouter({
       const app = await getAppByRepoId(repoId, userId);
 
       if (!app) {
+        if (await hasUserAppForRepo(repoId, userId)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+        }
         if (!frameworkConfig) {
           throw new TRPCError({
             code: "BAD_REQUEST",

@@ -32,6 +32,7 @@ export async function getPublicationDeployment(
           ? []
           : [
               eq(Deployments.userId, userId),
+              eq(Deployments.createdBy, userId),
               eq(Apps.createdBy, userId),
               eq(Projects.userId, userId),
             ]),

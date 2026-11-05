@@ -15,6 +15,12 @@ export type DeploymentRequest = {
   operation?: "publish";
 };
 
+class DeploymentNotFoundError extends Error {
+  constructor() {
+    super("Deployment not found");
+  }
+}
+
 type DeploymentStatus =
   | "queued"
   | "cloning"
@@ -66,7 +72,10 @@ export type DeploymentExecutionDependencies = {
     state: Pick<PublicationRecord, "status" | "lastError">,
     userId: string,
   ) => Promise<unknown>;
-  getDeployment: (id: number) => Promise<DeploymentSnapshot | undefined>;
+  getDeployment: (
+    id: number,
+    userId: string,
+  ) => Promise<DeploymentSnapshot | undefined>;
   updateDeployment: (
     params: { id: number; status: DeploymentStatus },
     userId: string,
@@ -399,7 +408,7 @@ export const createDeploymentExecutor = ({
     onRuntimeStarted: () => void,
   ) => {
     if (!deployment) {
-      throw new Error("Deployment not found");
+      throw new DeploymentNotFoundError();
     }
 
     if (!deployment.app) {
@@ -859,7 +868,7 @@ export const createDeploymentExecutor = ({
         // starts a container, or retires a runtime (including a newer release).
         const publication = await getPublication(deploymentId, userId);
         if (!publication) throw new Error("Publication not found");
-        const deployment = await getDeployment(deploymentId);
+        const deployment = await getDeployment(deploymentId, userId);
         if (!deployment) throw new Error("Publication not found");
         return withAppLock(deployment.appId, () =>
           publish(deploymentId, userId),
@@ -870,6 +879,10 @@ export const createDeploymentExecutor = ({
         failure: unknown,
         runtimeStarted = false,
       ): Promise<never> => {
+        // An ineligible delivery has no authority to mutate this deployment.
+        if (failure instanceof DeploymentNotFoundError) {
+          throw safeDiagnosticError(failure);
+        }
         const error = safeDiagnosticError(
           failure,
           runtimeStarted ? "Runtime started; recovery pending" : undefined,
@@ -911,13 +924,17 @@ export const createDeploymentExecutor = ({
 
       let deployment: DeploymentSnapshot | undefined;
       try {
-        deployment = await getDeployment(deploymentId);
+        deployment = await getDeployment(deploymentId, userId);
+        if (!deployment) throw new DeploymentNotFoundError();
       } catch (failure) {
         return reportFailure(failure);
       }
       const attempt = async () => {
         let runtimeStarted = false;
         try {
+          // Recheck inside the existing app turn, before touching Docker.
+          deployment = await getDeployment(deploymentId, userId);
+          if (!deployment) throw new DeploymentNotFoundError();
           await deploy(userId, deploymentId, deployment, () => {
             runtimeStarted = true;
           });
@@ -925,6 +942,6 @@ export const createDeploymentExecutor = ({
           return reportFailure(failure, runtimeStarted);
         }
       };
-      return deployment ? withAppLock(deployment.appId, attempt) : attempt();
+      return withAppLock(deployment.appId, attempt);
     });
 };

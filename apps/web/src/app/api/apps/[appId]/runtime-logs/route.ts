@@ -24,7 +24,7 @@ export async function GET(
     return new Response("Invalid application ID", { status: 400 });
   }
 
-  // This query scopes the deployment to the authenticated app owner.
+  // Resolve an owned deployment only while its app and parent project are active.
   const deployment = await getAppLatestDeployment(appId, user.id);
   if (!deployment) return new Response("Deployment not found", { status: 404 });
 
