@@ -34,14 +34,19 @@ test(
       await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`);
       await admin.end();
     });
-    const migration = await fs.readFile(
-      new URL(
-        "../../../packages/database/database/development/20260824171710_wakeful_typhoid_mary/migration.sql",
-        import.meta.url,
-      ),
-      "utf8",
+    const migrations = new URL(
+      "../../../packages/database/database/development/",
+      import.meta.url,
     );
-    await fixtureDb.query(migration);
+    for (const directory of (await fs.readdir(migrations)).sort()) {
+      if (!/^\d+_/.test(directory)) continue;
+      await fixtureDb.query(
+        await fs.readFile(
+          new URL(`${directory}/migration.sql`, migrations),
+          "utf8",
+        ),
+      );
+    }
     Object.assign(process.env, {
       DEV_DATABASE_URL: url.href,
       PROD_DATABASE_URL: url.href,
@@ -75,8 +80,14 @@ test(
         App: class {
           async getInstallationOctokit() {
             return {
-              request: async () => ({
-                data: { account: { login: "fixture-owner" } },
+              request: async (route) => ({
+                data:
+                  route === "GET /repositories/{repository_id}"
+                    ? {
+                        clone_url:
+                          "https://github.com/fixture-owner/fixture-app.git",
+                      }
+                    : { account: { login: "fixture-owner" } },
               }),
               auth: async () => ({ token: "fixture-clone-token" }),
             };
