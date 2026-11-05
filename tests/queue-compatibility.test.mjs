@@ -448,8 +448,15 @@ describe(
         await stop(first.child);
         const restarted = await startProducer(first.kind, connection.port);
         producers[index] = restarted;
-        for (const producer of producers)
-          assert.equal((await submit(producer, payload)).status, 201);
+        // Health confirms process startup, not Redis readiness. In particular,
+        // Express may briefly return its documented 503 while reconnecting.
+        for (const producer of producers) {
+          await until(async () => {
+            const outcome = await submit(producer, payload);
+            assert.ok([201, 503].includes(outcome.status), producer.kind);
+            return outcome.status === 201;
+          }, `${producer.kind} should acknowledge retained work after restart`);
+        }
       }
       const received = [];
       const before = await queue.getCompletedCount();
