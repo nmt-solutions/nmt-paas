@@ -4,6 +4,11 @@
   "license": "ISC",
   "main": "./dist/index.js",
   "exports": {
+    "./runtime-logs": {
+      "types": "./dist/runtime-logs.d.ts",
+      "import": "./dist/runtime-logs.js",
+      "default": "./dist/runtime-logs.js"
+    },
     "./client": {
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js",
