@@ -5,7 +5,7 @@ import { relations } from "./relations";
 import env from "./env/vars";
 
 const config: PoolConfig = {
-  connectionString: env.variables.DEV_DATABASE_URL,
+  connectionString: env.databaseUrl,
 };
 
 const pool = new Pool(config);
