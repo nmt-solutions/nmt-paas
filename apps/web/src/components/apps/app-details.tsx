@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { consumeRuntimeLogStream } from "@repo/api-sdk/runtime-logs";
 import { useTRPC } from "@/trpc/client";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -46,6 +47,146 @@ function StatusBadge({ status }: { status: string }) { const good = status === "
 function InfoCard({ icon, label, value, note }: { icon: React.ReactNode; label: string; value: string; note: string }) { return <section className="glass-panel p-5"><div className="flex items-center gap-2 text-primary">{icon}<span className="text-sm font-medium text-muted-foreground">{label}</span></div><p className="mt-4 text-xl font-semibold capitalize">{value}</p><p className="mt-1 text-sm text-muted-foreground">{note}</p></section>; }
 function DeploymentHistory({ deployments, activeDeploymentId, onSelect }: { deployments: { id: number; status: string; branch: string; commit: string; createdAt: Date | string | null }[]; activeDeploymentId?: number; onSelect: (deploymentId: number) => void }) { return <section className="glass-panel overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-5 py-5 sm:px-6"><div><h2 className="font-semibold">Deployment history</h2><p className="mt-1 text-sm text-muted-foreground">Every production release, newest first. Success confirms container start. Application readiness has not been checked.</p></div><span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{deployments.length} total</span></div>{deployments.length ? <div className="divide-y divide-border/70">{deployments.map((deployment) => { const isActive = deployment.id === activeDeploymentId; const isSuccess = deployment.status === "success"; const isRunning = ["queued", "building", "deploying"].includes(deployment.status.toLowerCase()); const timestamp = deployment.createdAt ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(deployment.createdAt)) : "Unknown time"; return <button type="button" key={deployment.id} onClick={() => onSelect(deployment.id)} className={`flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-primary/5 sm:px-6 ${isActive ? "bg-primary/5" : ""}`}><span className={`size-2.5 shrink-0 rounded-full ${isSuccess ? "bg-emerald-500" : isRunning ? "animate-pulse bg-amber-500" : "bg-destructive"}`} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-3 gap-y-1"><span className="font-medium">Deployment #{deployment.id}</span><span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">{deploymentStatusLabel(deployment.status)}</span>{isActive && <span className="text-xs font-medium text-primary">Viewing logs</span>}</div><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-muted-foreground"><span>{deployment.branch}</span><span>{deployment.commit.slice(0, 8)}</span><span className="font-sans">{timestamp}</span></div></div><span className="text-sm font-medium text-primary">View logs</span></button>; })}</div> : <div className="px-6 py-12 text-center text-sm text-muted-foreground">No deployments yet.</div>}</section>; }
 function LoadingDetails() { return <div className="space-y-5"><div className="glass-panel h-48 animate-pulse" /><div className="grid gap-4 md:grid-cols-3">{[1, 2, 3].map((item) => <div className="glass-panel h-32 animate-pulse" key={item} />)}</div></div>; }
-function LogPanel({ appId, title, icon, logs, empty = "No logs yet.", highlightedDeploymentId }: { appId: number; title: "Deployment logs" | "Application logs"; icon: React.ReactNode; logs: { id: number; message: string }[]; empty?: string; highlightedDeploymentId?: number }) { const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]); const [fullscreen, setFullscreen] = useState(false); const trpc = useTRPC(); const isDeploymentLogs = title === "Deployment logs"; const { data: latestSuccessDeployment } = useQuery({ ...trpc.app.getLatestSuccessDeployment.queryOptions({ appId }), enabled: !isDeploymentLogs }); useEffect(() => { if (isDeploymentLogs || !latestSuccessDeployment) return; const controller = new AbortController(); fetch(`/api/apps/${appId}/runtime-logs`, { signal: controller.signal, credentials: "same-origin" }).then(async (response) => { if (!response.ok || !response.body) throw new Error("Runtime log stream is unavailable."); const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const events = buffer.split("\n\n"); buffer = events.pop() ?? ""; for (const event of events) { const line = event.split("\n").find((item) => item.startsWith("data:")); if (!line) continue; const data = line.slice(5).trim(); if (data) setRuntimeLogs((current) => [...current, data]); } } }).catch((error: unknown) => { if (error instanceof Error && error.name !== "AbortError") console.error(error); }); return () => controller.abort(); }, [appId, isDeploymentLogs, latestSuccessDeployment]); const content = isDeploymentLogs ? (logs.length ? logs.map((log) => log.message).join("\n") : empty) : (runtimeLogs.length ? runtimeLogs.join("\n") : empty); return <><section className="glass-panel overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><h2 className="flex items-center gap-2 font-semibold"><span className="text-primary">{icon}</span>{title}</h2><p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">{isDeploymentLogs && <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />}{isDeploymentLogs && highlightedDeploymentId ? `Live · following deployment #${highlightedDeploymentId}` : isDeploymentLogs ? "Live build, deploy, and error output" : "Live container output"}</p></div><Button variant="ghost" size="icon" aria-label={`View ${title} fullscreen`} onClick={() => setFullscreen(true)}><Maximize2 className="size-4" /></Button></div><LogOutput content={content} /></section><Dialog open={fullscreen} onOpenChange={setFullscreen}><DialogContent className="h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] p-0"><DialogHeader className="border-b border-border/70 p-5"><DialogTitle className="flex items-center gap-2"><span className="text-primary">{icon}</span>{title}</DialogTitle><DialogDescription>Live output updates automatically while a deployment is running.</DialogDescription></DialogHeader><LogOutput content={content} fullscreen /></DialogContent></Dialog></>; }
+function LogPanel({
+  appId,
+  title,
+  icon,
+  logs,
+  empty = "No logs yet.",
+  highlightedDeploymentId,
+}: {
+  appId: number;
+  title: "Deployment logs" | "Application logs";
+  icon: React.ReactNode;
+  logs: { id: number; message: string }[];
+  empty?: string;
+  highlightedDeploymentId?: number;
+}) {
+  const [runtimeLogs, setRuntimeLogs] = useState<string[]>([]);
+  const [runtimeId, setRuntimeId] = useState<number>();
+  const [streamStatus, setStreamStatus] = useState("Connecting");
+  const [streamError, setStreamError] = useState<string>();
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  const isDeploymentLogs = title === "Deployment logs";
+  useEffect(() => {
+    if (isDeploymentLogs) return;
+    const controller = new AbortController();
+    fetch(`/api/apps/${appId}/runtime-logs`, {
+      signal: controller.signal,
+      credentials: "same-origin",
+    })
+      .then(async (response) => {
+        if (!response.ok || !response.body)
+          throw new Error("Runtime log stream is unavailable.");
+        await consumeRuntimeLogStream(response.body, (event) => {
+          if (controller.signal.aborted) return;
+          if (event.type === "runtime") {
+            setRuntimeId(event.deploymentId);
+            setRuntimeLogs([]);
+            setStreamError(undefined);
+            setStreamStatus("Live");
+          } else if (event.type === "log") {
+            setRuntimeLogs((current) => [...current, event.text]);
+          } else if (event.type === "error") {
+            setStreamError(event.message);
+            setStreamStatus("Stream failed");
+          } else {
+            setStreamStatus(
+              event.reason === "eof" ? "Stream ended" : "Stream failed",
+            );
+          }
+        });
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setStreamError(
+          "Runtime log connection failed. Reconnect to select the current runtime.",
+        );
+        setStreamStatus("Stream failed");
+      });
+    return () => controller.abort();
+  }, [appId, isDeploymentLogs, connectionAttempt]);
+  const content = isDeploymentLogs
+    ? logs.length
+      ? logs.map((log) => log.message).join("\n")
+      : empty
+    : runtimeLogs.length
+      ? runtimeLogs.join("\n")
+      : empty;
+  const description = isDeploymentLogs
+    ? highlightedDeploymentId
+      ? `Live ? following deployment #${highlightedDeploymentId}`
+      : "Live build, deploy, and error output"
+    : `${streamStatus}${runtimeId ? ` ? deployment #${runtimeId}` : ""}`;
+  return (
+    <>
+      <section className="glass-panel overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 py-4">
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold">
+              <span className="text-primary">{icon}</span>
+              {title}
+            </h2>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              {isDeploymentLogs && (
+                <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              )}
+              {description}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {!isDeploymentLogs && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Start a new subscription to the latest successful runtime"
+                onClick={() => {
+                  setRuntimeLogs([]);
+                  setRuntimeId(undefined);
+                  setStreamError(undefined);
+                  setStreamStatus("Connecting");
+                  setConnectionAttempt((current) => current + 1);
+                }}
+              >
+                <RefreshCw className="size-4" />
+                Reconnect
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`View ${title} fullscreen`}
+              onClick={() => setFullscreen(true)}
+            >
+              <Maximize2 className="size-4" />
+            </Button>
+          </div>
+        </div>
+        {streamError && !isDeploymentLogs && (
+          <p role="alert" className="px-5 py-3 text-sm text-destructive">
+            {streamError}
+          </p>
+        )}
+        <LogOutput content={content} />
+      </section>
+      <Dialog open={fullscreen} onOpenChange={setFullscreen}>
+        <DialogContent className="h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] p-0">
+          <DialogHeader className="border-b border-border/70 p-5">
+            <DialogTitle className="flex items-center gap-2">
+              <span className="text-primary">{icon}</span>
+              {title}
+            </DialogTitle>
+            <DialogDescription>
+              {description}
+              {streamError ? ` ? ${streamError}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <LogOutput content={content} fullscreen />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 function LogOutput({ content, fullscreen = false }: { content: string; fullscreen?: boolean }) { const [copied, setCopied] = useState(false); return <div className={`relative bg-slate-950 ${fullscreen ? "h-[calc(100%-5.75rem)]" : ""}`}><Button variant="ghost" size="sm" className="absolute right-3 top-3 z-10 bg-white/10 text-slate-100 hover:bg-white/20 hover:text-white" onClick={() => { navigator.clipboard.writeText(content).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }).catch(() => undefined); }}><Copy className="size-3.5" />{copied ? "Copied" : "Copy"}</Button><pre className={`${fullscreen ? "h-full" : "max-h-96"} overflow-auto p-5 pr-20 font-mono text-xs leading-6 whitespace-pre-wrap text-emerald-100`}>{content}</pre></div>; }
 function Field({ name, label, value, type = "text" }: { name: string; label: string; value: string; type?: string }) { return <label className="grid gap-2"><Label htmlFor={name}>{label}</Label>{name.includes("Command") ? <Textarea id={name} name={name} defaultValue={value} /> : <Input id={name} name={name} defaultValue={value} type={type} />}</label>; }

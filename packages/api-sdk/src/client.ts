@@ -4,6 +4,10 @@ import { APIResponse } from "./models/api-response";
 import { ValidationErrors } from "./models/deployment-queue";
 import { tryCatch } from "./utils/try-catch";
 import { AxiosHeaders } from "axios";
+import {
+  consumeRuntimeLogStream,
+  type RuntimeLogEvent,
+} from "./runtime-logs.js";
 
 export type AdminHostResponse = {
   data: {
@@ -86,6 +90,7 @@ export class ControlPanelAPIClient {
     deploymentId: number,
     onLog: (log: string) => void,
     signal?: AbortSignal,
+    onEvent?: (event: RuntimeLogEvent) => void,
   ) {
     const response = await fetch(
       `${this.baseUrl}/logs/stream/${deploymentId}`,
@@ -103,55 +108,14 @@ export class ControlPanelAPIClient {
       throw new Error("Deployment log stream is not available.");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    let buffer = "";
-
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, {
-          stream: true,
-        });
-
-        const events = buffer.split("\n\n");
-
-        buffer = events.pop() ?? "";
-
-        for (const event of events) {
-          const dataLine = event
-            .split("\n")
-            .find((line) => line.startsWith("data:"));
-
-          if (!dataLine) {
-            continue;
-          }
-
-          const data = dataLine.slice("data:".length).trim();
-
-          if (!data) {
-            continue;
-          }
-
-          try {
-            onLog(JSON.parse(data));
-          } catch {
-            onLog(data);
-          }
-        }
+    await consumeRuntimeLogStream(response.body, (event) => {
+      if (event.type === "runtime" && event.deploymentId !== deploymentId) {
+        throw new Error("Host returned a different runtime identity.");
       }
-    } finally {
-      // A consumer can stop before EOF (for example after its response closes).
-      // Cancel the body even without a caller-supplied AbortSignal.
-      await reader.cancel().catch(() => undefined);
-      reader.releaseLock();
-    }
+      if (event.type === "log") onLog(event.text);
+      if (onEvent) onEvent(event);
+      else if (event.type === "error") throw new Error(event.message);
+    });
   }
 
   async getAdminHost(): Promise<AdminHostResponse> {

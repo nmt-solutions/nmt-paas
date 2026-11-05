@@ -27,8 +27,10 @@ When investigating subscriptions that remain open, check whether the reverse
 proxy forwards disconnects and disables response buffering. An idle subscription
 with heartbeats is expected while Docker is following a running container. EOF
 and disconnect cleanup do not wait for the next 15-second heartbeat. Reopening
-the view creates a new subscription using the existing deployment lookup; this
-increment does not change reconnect identity or the log event protocol.
+the view creates a new subscription using the deployment lookup. The explicit
+runtime identity, typed outcomes, shared text consumer, and owner reconnect
+workflow are documented in
+[runtime log protocol and reconnect](runtime-log-protocol-and-reconnect.md).
 
 ## Local regression checks
 
@@ -36,7 +38,7 @@ Install dependencies with `npm ci`. Run `npm run test:runtime-logs` from the rep
 root with Node 22.15 or newer. It builds the SDK/database packages and runs the
 Express HTTP, SDK HTTP, and web route suites. The web suite uses Node's
 experimental module-mocking flag for external WorkOS and PostgreSQL fixtures;
-the route, database lookup, SDK, Express endpoint, Dockerode, and both HTTP hops
+the route, database lookup, SDK, Express endpoint, Dockerode HTTP transport, and both HTTP hops
 execute production code. No production credentials or database are needed.
 
 Run the native Go suite from `apps/node-manager` with the declared Go 1.27.1

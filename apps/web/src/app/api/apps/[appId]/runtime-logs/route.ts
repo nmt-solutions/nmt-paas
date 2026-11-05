@@ -2,6 +2,10 @@ import "server-only";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { getAppLatestDeployment } from "@repo/database/access-layer/apps.dal";
 import cpApiClient from "@/services/cp-api-client";
+import {
+  encodeRuntimeLogEvent,
+  type RuntimeLogEvent,
+} from "@repo/api-sdk/runtime-logs";
 
 export const dynamic = "force-dynamic";
 
@@ -33,25 +37,21 @@ export async function GET(
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let identified = false;
+      const forward = (event: RuntimeLogEvent) => {
+        if (finished || upstream.signal.aborted) return;
+        if (event.type === "runtime") identified = true;
+        controller.enqueue(encoder.encode(encodeRuntimeLogEvent(event)));
+      };
       void cpApiClient
-        .streamRuntimeLogs(
-          deployment.id,
-          (log) => {
-            if (finished || upstream.signal.aborted) return;
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(log)}\n\n`),
-            );
-          },
-          upstream.signal,
-        )
+        .streamRuntimeLogs(deployment.id, () => {}, upstream.signal, forward)
         .catch((error: unknown) => {
           if (finished || upstream.signal.aborted) return;
           console.error("Failed to proxy runtime logs", error);
-          controller.enqueue(
-            encoder.encode(
-              `event: error\ndata: ${JSON.stringify({ message: "Failed to read runtime logs." })}\n\n`,
-            ),
-          );
+          if (!identified)
+            forward({ type: "runtime", deploymentId: deployment.id });
+          forward({ type: "error", message: "Failed to read runtime logs." });
+          forward({ type: "end", reason: "error" });
         })
         .finally(() => {
           detach();
