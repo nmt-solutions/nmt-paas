@@ -17,7 +17,7 @@ import env from "../env/vars.js";
 import { fetchEnvVars } from "../services/env-vars.js";
 
 const deploy = async (userId: string, deploymentId: number) => {
-  const deployment = await getDeployment(deploymentId);
+  const deployment = await getDeployment(deploymentId, userId);
 
   if (!deployment) {
     throw new Error("Deployment not found");

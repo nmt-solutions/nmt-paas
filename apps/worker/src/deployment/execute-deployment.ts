@@ -10,6 +10,12 @@ import {
 
 export type DeploymentRequest = { userId: string; deploymentId: number };
 
+class DeploymentNotFoundError extends Error {
+  constructor() {
+    super("Deployment not found");
+  }
+}
+
 type DeploymentStatus =
   | "queued"
   | "cloning"
@@ -40,7 +46,10 @@ type DeploymentSnapshot = {
 };
 
 export type DeploymentExecutionDependencies = {
-  getDeployment: (id: number) => Promise<DeploymentSnapshot | undefined>;
+  getDeployment: (
+    id: number,
+    userId: string,
+  ) => Promise<DeploymentSnapshot | undefined>;
   updateDeployment: (
     params: { id: number; status: DeploymentStatus },
     userId: string,
@@ -453,10 +462,10 @@ export const createDeploymentExecutor = ({
   };
 
   const deploy = async (userId: string, deploymentId: number) => {
-    const deployment = await getDeployment(deploymentId);
+    const deployment = await getDeployment(deploymentId, userId);
 
     if (!deployment) {
-      throw new Error("Deployment not found");
+      throw new DeploymentNotFoundError();
     }
 
     if (!deployment.app) {
@@ -478,6 +487,10 @@ export const createDeploymentExecutor = ({
     }
 
     return withAppLock(deployment.appId, async () => {
+      // Eligibility may change while another delivery owns this app's turn.
+      if (!(await getDeployment(deploymentId, userId))) {
+        throw new DeploymentNotFoundError();
+      }
       const appName = deployment.app?.appName ?? "application";
 
       const appPort = frameworkConfig.port;
@@ -839,6 +852,10 @@ export const createDeploymentExecutor = ({
       try {
         await deploy(userId, deploymentId);
       } catch (failure) {
+        // An ineligible delivery has no authority to mutate this deployment.
+        if (failure instanceof DeploymentNotFoundError) {
+          throw safeDiagnosticError(failure);
+        }
         const error = safeDiagnosticError(failure);
         console.error(`Deployment ${deploymentId} failed:`, error);
 

@@ -1,6 +1,6 @@
 import { tryCatch } from "@/utils/try-catch";
 import { createAppDomains } from "@repo/database/access-layer/app-domains.dal";
-import { createApp } from "@repo/database/access-layer/apps.dal";
+import { createApp, getActiveApp } from "@repo/database/access-layer/apps.dal";
 import { createDeployment } from "@repo/database/access-layer/deployment.dal";
 import { createFrameworkConfig } from "@repo/database/access-layer/framework-config.dal";
 import { createProject } from "@repo/database/access-layer/project.dal";
@@ -20,6 +20,14 @@ export const deployProject = async (params: {
   appId: number;
 }) => {
   const { appId, userId, owner, repoId, repo, branch } = params;
+
+  const requireActiveApp = async () => {
+    const app = await getActiveApp(appId, userId);
+    if (!app || app.repoId !== repoId) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+    }
+  };
+  await requireActiveApp();
 
   const octokit =
     params.octokit ?? (await getUserGithubOctokit(userId)).octokit;
@@ -41,6 +49,8 @@ export const deployProject = async (params: {
 
   const commit = commitsData.data;
 
+  // Repository access can outlive the app's eligibility. Recheck before admission.
+  await requireActiveApp();
   const deployment = await createDeployment({
     appId,
     branch: branch,

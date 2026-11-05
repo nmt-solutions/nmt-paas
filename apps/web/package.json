@@ -10,6 +10,7 @@
     "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit",
     "test:auth": "node tests/run-auth-workflows.mjs",
+    "test:eligibility": "node tests/run-auth-workflows.mjs --experimental-test-module-mocks tests/active-resource-workflows.test.ts",
     "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts"
   },
   "dependencies": {
