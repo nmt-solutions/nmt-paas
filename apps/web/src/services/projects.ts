@@ -1,4 +1,5 @@
 import { tryCatch } from "@/utils/try-catch";
+import { getActiveApp } from "@repo/database/access-layer/apps.dal";
 import {
   admitDeployment,
   type Submission,
@@ -22,6 +23,14 @@ export const deployProject = async (params: {
 }) => {
   const { appId, userId, owner, repoId, repo, branch } = params;
 
+  const requireActiveApp = async () => {
+    const app = await getActiveApp(appId, userId);
+    if (!app || app.repoId !== repoId) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+    }
+  };
+  await requireActiveApp();
+
   const octokit =
     params.octokit ?? (await getUserGithubOctokit(userId)).octokit;
 
@@ -42,6 +51,8 @@ export const deployProject = async (params: {
 
   const commit = commitsData.data;
 
+  // Repository access can outlive the app's eligibility. Recheck before admission.
+  await requireActiveApp();
   const { data: deployment, error: admissionFailure } = await tryCatch(
     admitDeployment(
       {

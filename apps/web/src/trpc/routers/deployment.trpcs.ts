@@ -3,6 +3,7 @@ import { authenticatedProcedure, createTRPCRouter } from "../init";
 import {
   getAppByRepoId,
   getUserApp,
+  hasUserAppForRepo,
 } from "@repo/database/access-layer/apps.dal";
 import {
   getDeploymentSubmission,
@@ -105,6 +106,9 @@ export const deploymentRouter = createTRPCRouter({
       const app = await getAppByRepoId(repoId, userId);
 
       if (!app) {
+        if (await hasUserAppForRepo(repoId, userId)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+        }
         if (!frameworkConfig) {
           throw new TRPCError({
             code: "BAD_REQUEST",
