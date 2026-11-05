@@ -1,6 +1,6 @@
 import z from "zod";
 import { APIHandler } from "../../../models/api-handler.model.js";
-import { enqueueDeployment } from "@repo/queues";
+import { DeploymentEnqueueConflict, enqueueDeployment } from "@repo/queues";
 import {
   QueueDeploymentSchema,
   QueueDeploymentReqBody,
@@ -31,7 +31,17 @@ const queueDeployment: APIHandler<
   let job;
   try {
     job = await enqueueDeployment(data);
-  } catch {
+  } catch (error) {
+    if (error instanceof DeploymentEnqueueConflict) {
+      res.status(409).send({
+        status: "error",
+        statusCode: 409,
+        message: error.message,
+        data: null,
+        errors: null,
+      });
+      return;
+    }
     res.status(503).send({
       status: "error",
       statusCode: 503,

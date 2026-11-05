@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer as createHTTPServer } from "node:http";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -311,6 +312,254 @@ describe(
       }
     });
 
+    test("concurrent identical requests through either producer acknowledge one retained deployment job", async () => {
+      const payload = { userId: "dedup-owner", deploymentId: 600 };
+      const before = await queue.getCompletedCount();
+      const outcomes = await Promise.all(
+        producers.flatMap((producer) =>
+          Array.from({ length: 10 }, () => submit(producer, payload)),
+        ),
+      );
+      for (const outcome of outcomes) assert.equal(outcome.status, 201);
+      const waiting = await queue.getJobs(["waiting"]);
+      assert.equal(waiting.length, 1, "one tracked job across HTTP retries");
+      assert.deepEqual(waiting[0].data, payload);
+
+      const received = [];
+      await consume(
+        async (job) => {
+          received.push({ id: job.id, data: job.data });
+        },
+        async () => {
+          await until(
+            async () => (await queue.getCompletedCount()) === before + 1,
+            "The one accepted deployment should complete",
+          );
+          for (const producer of producers)
+            assert.equal((await submit(producer, payload)).status, 201);
+          assert.equal(await queue.getWaitingCount(), 0);
+          assert.equal(await queue.getActiveCount(), 0);
+        },
+      );
+      assert.deepEqual(received, [{ id: waiting[0].id, data: payload }]);
+    });
+
+    test("conflicting deployment reuse is rejected without replacing the first accepted payload", async () => {
+      const received = [];
+      for (const [index, first] of producers.entries()) {
+        const payload = {
+          userId: `first-owner-${index}`,
+          deploymentId: 610 + index,
+        };
+        assert.equal((await submit(first, payload)).status, 201);
+        const conflicts = await Promise.all(
+          producers.flatMap((producer) =>
+            Array.from({ length: 5 }, () =>
+              submit(producer, { ...payload, userId: "different-owner" }),
+            ),
+          ),
+        );
+        for (const conflict of conflicts) {
+          assert.deepEqual(conflict, {
+            status: 409,
+            body: {
+              status: "error",
+              statusCode: 409,
+              message: "Deployment is already queued with a different payload.",
+              data: null,
+              errors: null,
+            },
+          });
+        }
+        // Ignored fields and object key order do not change the valid payload.
+        for (const producer of producers)
+          assert.equal(
+            (
+              await submit(producer, {
+                ignored: true,
+                deploymentId: payload.deploymentId,
+                userId: payload.userId,
+              })
+            ).status,
+            201,
+          );
+      }
+      const before = await queue.getCompletedCount();
+      await consume(
+        async (job) => {
+          received.push(job.data);
+        },
+        async () => {
+          await until(
+            async () =>
+              (await queue.getCompletedCount()) === before + producers.length,
+            "Only the first payload for each deployment should execute",
+          );
+        },
+      );
+      assert.deepEqual(
+        received,
+        producers.map((_, index) => ({
+          userId: `first-owner-${index}`,
+          deploymentId: 610 + index,
+        })),
+      );
+    });
+
+    test("lost acknowledgements can be retried after producer restart without creating more work", async () => {
+      for (const [index, first] of producers.entries()) {
+        const payload = { userId: "lost-ack-owner", deploymentId: 620 + index };
+        let resolveAccepted, rejectAccepted;
+        const accepted = new Promise((resolve, reject) => {
+          resolveAccepted = resolve;
+          rejectAccepted = reject;
+        });
+        // Forward to the real host, then drop its response on the caller's side.
+        const proxy = createHTTPServer((request, response) => {
+          request.resume();
+          submit(first, payload).then(
+            (result) => {
+              resolveAccepted(result);
+              response.destroy();
+            },
+            (error) => {
+              rejectAccepted(error);
+              response.destroy();
+            },
+          );
+        });
+        proxy.listen(0, "127.0.0.1");
+        await once(proxy, "listening");
+        try {
+          const [outcome] = await Promise.all([
+            accepted,
+            assert.rejects(
+              submit(
+                { base: `http://127.0.0.1:${proxy.address().port}` },
+                payload,
+              ),
+              TypeError,
+            ),
+          ]);
+          assert.equal(outcome.status, 201);
+        } finally {
+          await new Promise((done) => proxy.close(done));
+        }
+        await stop(first.child);
+        const restarted = await startProducer(first.kind, connection.port);
+        producers[index] = restarted;
+        for (const producer of producers)
+          assert.equal((await submit(producer, payload)).status, 201);
+      }
+      const received = [];
+      const before = await queue.getCompletedCount();
+      await consume(
+        async (job) => {
+          received.push(job.data);
+        },
+        async () => {
+          await until(
+            async () =>
+              (await queue.getCompletedCount()) === before + producers.length,
+            "A response lost after acceptance must not duplicate delivery",
+          );
+        },
+      );
+      assert.deepEqual(
+        received,
+        producers.map((_, index) => ({
+          userId: "lost-ack-owner",
+          deploymentId: 620 + index,
+        })),
+      );
+    });
+
+    test("numeric spelling and JSON encoding do not split a deployment identity", async () => {
+      const spellings = [
+        ["0", "-0"],
+        ["42.0", "4.2e1"],
+        ["0.0000001", "1e-7"],
+        ["100000000000000000000", "1e20"],
+        ["0.5", "5e-1"],
+        ["5e-324", "0.5e-323"],
+        ["1.7976931348623157e308", "1.7976931348623157e+308"],
+        ["9007199254740991", "9.007199254740991e15"],
+        ["9007199254740992", "9.007199254740992e15"],
+      ];
+      const userId = "owner-雪-<&>\u0000";
+      for (const [first, retry] of spellings) {
+        for (const producer of producers) {
+          for (const spelling of [first, retry]) {
+            const result = await submit(
+              producer,
+              `{"deploymentId":${spelling},"userId":${JSON.stringify(userId)}}`,
+            );
+            assert.equal(result.status, 201, `${producer.kind}: ${spelling}`);
+          }
+        }
+      }
+      const waiting = await queue.getJobs(["waiting"]);
+      assert.equal(waiting.length, spellings.length);
+      const received = [];
+      const before = await queue.getCompletedCount();
+      await consume(
+        async (job) => {
+          received.push(job.data);
+        },
+        async () => {
+          await until(
+            async () =>
+              (await queue.getCompletedCount()) === before + spellings.length,
+            "One unchanged payload should arrive for each numeric deployment value",
+          );
+        },
+      );
+      assert.deepEqual(
+        received,
+        spellings.map(([first]) => ({
+          userId,
+          deploymentId: Number(first) + 0,
+        })),
+      );
+    });
+
+    test("retries while a deployment is active neither replace it nor schedule another attempt", async () => {
+      const payload = { userId: "active-owner", deploymentId: 630 };
+      const received = [];
+      let release;
+      const running = new Promise((resolve) => {
+        release = resolve;
+      });
+      const before = await queue.getCompletedCount();
+      try {
+        await consume(
+          async (job) => {
+            received.push(job.data);
+            await running;
+          },
+          async () => {
+            assert.equal((await submit(producers[0], payload)).status, 201);
+            await until(
+              () => received.length === 1,
+              "Accepted work should start",
+            );
+            for (const producer of producers)
+              assert.equal((await submit(producer, payload)).status, 201);
+            assert.equal(await queue.getActiveCount(), 1);
+            assert.equal(await queue.getWaitingCount(), 0);
+            release();
+            await until(
+              async () => (await queue.getCompletedCount()) === before + 1,
+              "The original active work should complete once",
+            );
+          },
+        );
+      } finally {
+        release();
+      }
+      assert.deepEqual(received, [payload]);
+    });
+
     test("jobs submitted by either producer stay paused until the queue resumes", async () => {
       const received = [];
       const before = await queue.getCompletedCount();
@@ -331,6 +580,18 @@ describe(
                 ).status,
                 201,
               );
+            }
+            for (const [index] of producers.entries()) {
+              for (const producer of producers)
+                assert.equal(
+                  (
+                    await submit(producer, {
+                      userId: "paused-owner",
+                      deploymentId: 200 + index,
+                    })
+                  ).status,
+                  201,
+                );
             }
             await delay(200);
             assert.deepEqual(received, []);
@@ -379,6 +640,23 @@ describe(
                 201,
               );
             }
+            await until(
+              async () => (await queue.getDelayedCount()) === producers.length,
+              "Failed attempts should enter backoff before retrying enqueue",
+            );
+            for (const [index] of producers.entries()) {
+              for (const producer of producers)
+                assert.equal(
+                  (
+                    await submit(producer, {
+                      userId: "retry-owner",
+                      deploymentId: 300 + index,
+                    })
+                  ).status,
+                  201,
+                );
+            }
+            assert.equal(await queue.getDelayedCount(), producers.length);
             await until(
               async () =>
                 (await queue.getFailedCount()) === before + producers.length,
@@ -601,10 +879,14 @@ describe(
       "completion actually evicts old records and retains the latest 100 jobs from either producer",
       { timeout: 60000 },
       async () => {
-        for (const producer of producers) {
+        for (const [producerIndex, producer] of producers.entries()) {
           const completed = [];
+          const payloads = new Map();
           await consume(
-            async () => "fixture-complete",
+            async (job) => {
+              payloads.set(job.id, job.data);
+              return "fixture-complete";
+            },
             async (worker) => {
               worker.on("completed", (job) => completed.push(job.id));
               for (let start = 0; start < 101; start += 20) {
@@ -614,7 +896,8 @@ describe(
                     (_, index) =>
                       submit(producer, {
                         userId: `retention-${producer.kind}`,
-                        deploymentId: 10000 + start + index,
+                        deploymentId:
+                          10000 + producerIndex * 2000 + start + index,
                       }),
                   ),
                 );
@@ -636,6 +919,37 @@ describe(
           const latest = await queue.getJob(completed.at(-1));
           assert.equal(await latest.getState(), "completed");
           assert.equal(latest.returnvalue, "fixture-complete");
+          for (const retryProducer of producers)
+            assert.equal(
+              (await submit(retryProducer, latest.data)).status,
+              201,
+            );
+          assert.equal(await queue.getWaitingCount(), 0);
+
+          // Once BullMQ evicts a job, the same delivery identity can run again.
+          const evictedPayload = payloads.get(completed[0]);
+          const redelivered = [];
+          await consume(
+            async (job) => {
+              redelivered.push({ id: job.id, data: job.data });
+            },
+            async () => {
+              assert.equal(
+                (await submit(producers.at(-1), evictedPayload)).status,
+                201,
+              );
+              await until(
+                async () =>
+                  (await queue.getJob(completed[0]))
+                    ?.getState()
+                    .then((state) => state === "completed"),
+                "An evicted completion can be delivered again",
+              );
+            },
+          );
+          assert.deepEqual(redelivered, [
+            { id: completed[0], data: evictedPayload },
+          ]);
         }
       },
     );
@@ -644,10 +958,12 @@ describe(
       "terminal failure actually evicts old records and retains the latest 1000 jobs from either producer",
       { timeout: 60000 },
       async () => {
-        for (const producer of producers) {
+        for (const [producerIndex, producer] of producers.entries()) {
           const failed = [];
+          const payloads = new Map();
           await consume(
-            async () => {
+            async (job) => {
+              payloads.set(job.id, job.data);
               // Avoid waiting six seconds for each retention fixture. The normal
               // three-attempt policy is exercised separately with ordinary errors.
               throw new UnrecoverableError("fixture terminal failure");
@@ -663,7 +979,8 @@ describe(
                     (_, index) =>
                       submit(producer, {
                         userId: `retention-${producer.kind}`,
-                        deploymentId: 20000 + start + index,
+                        deploymentId:
+                          20000 + producerIndex * 2000 + start + index,
                       }),
                   ),
                 );
@@ -681,6 +998,38 @@ describe(
           const latest = await queue.getJob(failed.at(-1));
           assert.equal(await latest.getState(), "failed");
           assert.equal(latest.failedReason, "fixture terminal failure");
+          for (const retryProducer of producers)
+            assert.equal(
+              (await submit(retryProducer, latest.data)).status,
+              201,
+            );
+          assert.equal(await queue.getWaitingCount(), 0);
+          assert.equal(await latest.getState(), "failed");
+
+          const evictedPayload = payloads.get(failed[0]);
+          const redelivered = [];
+          await consume(
+            async (job) => {
+              redelivered.push({ id: job.id, data: job.data });
+              throw new UnrecoverableError("fixture terminal failure");
+            },
+            async () => {
+              assert.equal(
+                (await submit(producers.at(-1), evictedPayload)).status,
+                201,
+              );
+              await until(
+                async () =>
+                  (await queue.getJob(failed[0]))
+                    ?.getState()
+                    .then((state) => state === "failed"),
+                "An evicted failure can be delivered again",
+              );
+            },
+          );
+          assert.deepEqual(redelivered, [
+            { id: failed[0], data: evictedPayload },
+          ]);
         }
       },
     );
