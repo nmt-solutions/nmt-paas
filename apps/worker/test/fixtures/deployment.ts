@@ -225,7 +225,7 @@ export async function deploymentFixture({
       return;
     }
     const match = url.pathname.match(
-      /^\/containers\/([^/]+)(?:\/(start|json|logs))?$/,
+      /^\/containers\/([^/]+)(?:\/(start|stop|json|logs))?$/,
     );
     if (match) {
       const id = match[1]!;
@@ -237,6 +237,10 @@ export async function deploymentFixture({
         containers.delete(id);
         if (disappearOnRemove.includes(id))
           return send(404, { message: "No such container" });
+        return send(204);
+      }
+      if (match[2] === "stop") {
+        container.State = "exited";
         return send(204);
       }
       if (match[2] === "start") {

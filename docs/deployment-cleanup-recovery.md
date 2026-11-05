@@ -75,8 +75,10 @@ attempt counts, backoff and retention scripts are unchanged.
   replacement must still be running with this deployment/app identity before
   an existing old runtime is removed. Unidentified legacy containers and changed
   ownership are preserved with a pending error.
-- A previously failed runtime that is now running is preserved, as is its image.
-  Its superseded failure-cleanup intent is resolved as `preserved`.
+- A previously failed runtime that is now running or has a recorded successful
+  start is preserved, as is its image. An adopted runtime remains protected even
+  if the application subsequently stops. The superseded failure-cleanup intent
+  is resolved as `preserved`.
 - Images are removed without force; shared tags or use by other containers can
   make cleanup remain pending. Successful runtime images are not collected here.
 - Container removal never requests volume removal. No image/volume/network prune,

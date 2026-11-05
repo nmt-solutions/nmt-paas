@@ -28,6 +28,7 @@ type DeploymentStatus =
   | "failed";
 
 type DeploymentSnapshot = {
+  status?: string;
   userId?: string;
   cleanup?: DeploymentCleanup | null;
   appId: number;
@@ -500,15 +501,17 @@ export const createDeploymentExecutor = ({
           }
           const running =
             target.kind === "runtime" &&
-            (details as Docker.ContainerInspectInfo).State.Running;
+            (deployment.status === "success" ||
+              (details as Docker.ContainerInspectInfo).State.Running);
           const usedImage =
             target.kind === "image" &&
-            (await docker.listContainers({ all: true })).some(
-              (c) =>
-                c.State === "running" &&
-                c.Labels?.["nmt.app-id"] === String(deployment.appId) &&
-                c.Labels?.["nmt.deployment-id"] === String(deploymentId),
-            );
+            (deployment.status === "success" ||
+              (await docker.listContainers({ all: true })).some(
+                (c) =>
+                  c.State === "running" &&
+                  c.Labels?.["nmt.app-id"] === String(deployment.appId) &&
+                  c.Labels?.["nmt.deployment-id"] === String(deploymentId),
+              ));
           if (running || usedImage) {
             // A deployment retry can adopt a once-failed runtime/image. Its
             // earlier failure-cleanup intent must never delete that runtime.

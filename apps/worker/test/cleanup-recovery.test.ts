@@ -250,3 +250,52 @@ test("cleanup with no durable intent does not claim untracked resources were rem
     true,
   );
 });
+
+test("an adopted current runtime remains protected when it stops before cleanup recovery", async (t) => {
+  const failRemove = { "deployment-42": "busy", "fixture-image": "busy" };
+  const fixture = await deploymentFixture({
+    failStart: "deployment-42",
+    failRemove,
+  });
+  t.after(fixture.close);
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Start application/,
+  );
+  fixture.restoreStart();
+  // Start confirmation succeeds, but the ledger cannot acknowledge adoption.
+  await assert.rejects(
+    createDeploymentExecutor({
+      ...fixture.dependencies,
+      saveDeploymentCleanup: async () => {
+        throw new Error("Ledger unavailable");
+      },
+    })({ userId, deploymentId }),
+    /cleanup incomplete/,
+  );
+  await fixture.docker.getContainer("deployment-42").stop();
+  Reflect.deleteProperty(failRemove, "deployment-42");
+  Reflect.deleteProperty(failRemove, "fixture-image");
+  const cleanup = await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+    action: "cleanup",
+  });
+  assert.equal(
+    cleanup?.artifacts.find((a) => a.kind === "runtime")?.status,
+    "preserved",
+  );
+  assert.equal(
+    cleanup?.artifacts.find((a) => a.kind === "image")?.status,
+    "preserved",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("deployment-42").inspect()).State
+      .Running,
+    false,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+});
