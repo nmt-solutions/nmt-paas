@@ -2,10 +2,17 @@ import { database } from "..";
 import { eq, InferInsertModel, InferSelectModel } from "drizzle-orm";
 import { Deployments } from "../schema";
 import { UpdateInput } from "../utils/types";
+import { activeAppEligibility } from "./app-eligibility";
 
-export const getDeployment = async (deploymentId: number) => {
+export const getDeployment = async (deploymentId: number, userId: string) => {
   return database.query.Deployments.findFirst({
-    where: { id: deploymentId, resourceStatus: "active" },
+    where: {
+      id: deploymentId,
+      userId,
+      createdBy: userId,
+      resourceStatus: "active",
+      app: activeAppEligibility(userId),
+    },
     with: {
       app: {
         with: {

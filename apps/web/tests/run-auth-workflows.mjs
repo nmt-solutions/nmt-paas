@@ -49,7 +49,9 @@ try {
       "--test",
       "--test-force-exit",
       ...process.argv.slice(2),
-      "tests/auth-workflows.test.ts",
+      ...(process.argv.slice(2).some((arg) => arg.endsWith(".test.ts"))
+        ? []
+        : ["tests/auth-workflows.test.ts"]),
     ],
     {
       cwd: new URL("../", import.meta.url),
