@@ -131,7 +131,7 @@ const deploy = async (userId: string, deploymentId: number) => {
 
     console.log(`Cloning repository for ${deployment.app?.appName}...`);
 
-    const cloneUrl = await getCloneUrl(userId, deployment.app?.appName ?? "");
+    const cloneUrl = await getCloneUrl(userId, deployment.repoId);
 
     await executeCommand(builderContainer, [
       "sh",

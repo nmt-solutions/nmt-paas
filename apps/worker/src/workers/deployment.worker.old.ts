@@ -61,7 +61,7 @@ const deploy = async (userId: string, deploymentId: number) => {
     createdBy: userId,
   });
 
-  const cloneUrl = await getCloneUrl(userId, deployment.app?.appName ?? "");
+  const cloneUrl = await getCloneUrl(userId, deployment.repoId);
 
   await executeCommand(container, ["sh", "-c", `git clone ${cloneUrl} .`]);
 
