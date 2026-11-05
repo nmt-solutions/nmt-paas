@@ -58,7 +58,9 @@ failed job through BullMQ's supported retry operation. Do not create a new
 deployment merely to clear a Docker-name conflict. Legacy artifacts without the
 new ownership labels need operator inspection; execution will not guess their
 ownership or relabel them. Keep worker output when persistence is unavailable.
-This increment adds no independent durable cleanup ledger or recovery endpoint.
+Incomplete artifact removals now have a focused durable ledger and
+[cleanup-only operator recovery](deployment-cleanup-recovery.md). That workflow
+does not rebuild or redeploy and leaves the runtime-start outcome unchanged.
 
 ## Supported concurrency
 

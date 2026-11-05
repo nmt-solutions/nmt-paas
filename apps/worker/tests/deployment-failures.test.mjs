@@ -60,8 +60,12 @@ test(
     });
     ({ database } = await import("@repo/database"));
     const schema = await import("@repo/database/schema");
-    const { getDeployment, createDeployment, updateDeployment } =
-      await import("@repo/database/access-layer/deployment.dal");
+    const {
+      getDeployment,
+      createDeployment,
+      updateDeployment,
+      saveDeploymentCleanup,
+    } = await import("@repo/database/access-layer/deployment.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
     const { getUserApp } = await import("@repo/database/access-layer/apps.dal");
@@ -171,6 +175,7 @@ test(
         const storage = {
           getDeployment,
           updateDeployment,
+          saveDeploymentCleanup,
           createDeploymentLogs,
         };
         const executeDeployment = createDeploymentExecutor({

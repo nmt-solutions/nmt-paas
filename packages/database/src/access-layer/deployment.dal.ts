@@ -1,6 +1,6 @@
 import { database } from "..";
 import { eq, InferInsertModel, InferSelectModel } from "drizzle-orm";
-import { Deployments } from "../schema";
+import { Deployments, type DeploymentCleanup } from "../schema";
 import { UpdateInput } from "../utils/types";
 
 export const getDeployment = async (deploymentId: number) => {
@@ -37,3 +37,9 @@ export const updateDeployment = async (
     .set({ ...params, modifiedBy: updatedBy, id: undefined })
     .where(eq(Deployments.id, params.id));
 };
+
+export const saveDeploymentCleanup = (
+  id: number,
+  cleanup: DeploymentCleanup,
+  updatedBy: string,
+) => updateDeployment({ id, cleanup }, updatedBy);

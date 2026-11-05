@@ -71,6 +71,7 @@ test(
       },
     };
     const dependencies: DeploymentExecutionDependencies = {
+      saveDeploymentCleanup: async () => {},
       ...database,
       getDocker: async () => docker,
       ...createDockerCommandAdapter({
@@ -172,6 +173,7 @@ test(
       },
     };
     const dependencies: DeploymentExecutionDependencies = {
+      saveDeploymentCleanup: async () => {},
       ...database,
       getDocker: async () => docker,
       ...createDockerCommandAdapter({
@@ -290,6 +292,7 @@ test(
       throw new Error("A recovered runtime must not build again");
     };
     const dependencies: DeploymentExecutionDependencies = {
+      saveDeploymentCleanup: async () => {},
       getDeployment: async () => deployment,
       updateDeployment: async ({ status }) => {
         deployment.status = status;
