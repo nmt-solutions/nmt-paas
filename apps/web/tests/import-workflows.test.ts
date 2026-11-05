@@ -14,6 +14,7 @@ const fixtures = new Client({
 });
 await fixtures.connect();
 const queued: { deploymentId: number; userId: string }[] = [];
+let hostUnavailable = false;
 const networkTransactions: { boundary: string; count: number }[] = [];
 async function observeTransactions(boundary: string) {
   const { rows } = await fixtures.query<{ count: number }>(
@@ -32,6 +33,18 @@ const host = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   await observeTransactions("deployment host");
+  if (hostUnavailable) {
+    response.writeHead(503, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        status: "error",
+        statusCode: 503,
+        message: "fixture-secret unavailable",
+        data: null,
+      }),
+    );
+    return;
+  }
   queued.push(JSON.parse(Buffer.concat(chunks).toString()));
   response.setHeader("content-type", "application/json");
   response.end(
@@ -226,6 +239,38 @@ test("first import preserves the submitted name, nondefault branch, and complete
   ]);
 });
 
+test("a host outage returns a durable deployment and the same submission recovers that identity", async () => {
+  const caller = await owner("durable-outage");
+  const input = {
+    ...importInput,
+    submissionId: "731de7e8-c319-435d-83c4-e679df9c7d3e",
+  };
+  hostUnavailable = true;
+  try {
+    const result = await caller.deployment.deploy(input);
+    assert.equal(result.outcome, "uncertain");
+    assert.equal(result.dispatchState, "pending");
+    const app = await caller.app.get({ appId: result.appId });
+    assert.deepEqual(
+      app.deployments.map(({ id }) => id),
+      [result.deploymentId],
+    );
+    hostUnavailable = false;
+    const retried = await caller.deployment.deploy(input);
+    assert.equal(retried.deploymentId, result.deploymentId);
+    assert.equal(retried.appId, result.appId);
+    assert.equal(retried.projectId, result.projectId);
+    assert.equal((await caller.project.list()).length, 1);
+    assert.equal(
+      (await caller.app.get({ appId: result.appId })).deployments.length,
+      1,
+    );
+    assert.ok(!JSON.stringify(result).includes("fixture-secret"));
+  } finally {
+    hostUnavailable = false;
+  }
+});
+
 for (const failure of [
   { name: "project", table: "Projects" },
   { name: "app", table: "Apps" },
@@ -246,6 +291,7 @@ for (const failure of [
     condition: `WHEN (NEW.key = 'SECOND_TOKEN')`,
   },
   { name: "deployment", table: "Deployments" },
+  { name: "dispatch intent", table: "DeploymentDispatches" },
   { name: "commit", table: "Deployments", deferred: true },
 ]) {
   test(`a failed ${failure.name} write leaves no partial import and a retry can create a complete setup`, async () => {
@@ -301,6 +347,121 @@ test("a blank selected branch is rejected before creating import setup", async (
   );
   assert.deepEqual(await caller.project.list(), []);
   assert.equal(queued.length, queuedBefore);
+});
+
+test("a reused submission rejects changed content without changing its accepted deployment", async () => {
+  const caller = await owner("submission-conflict");
+  const input = {
+    ...importInput,
+    submissionId: "6ac48e36-97aa-4b57-ae71-2f017de3a048",
+  };
+  const accepted = await caller.deployment.deploy(input);
+  await assert.rejects(caller.deployment.deploy({ ...input, branch: "main" }), {
+    code: "CONFLICT",
+  });
+  assert.deepEqual(
+    (await caller.app.get({ appId: accepted.appId })).deployments.map(
+      ({ id }) => id,
+    ),
+    [accepted.deploymentId],
+  );
+});
+
+test("owners can find accepted work by submission identity without exposing its internal fingerprint", async () => {
+  const caller = await owner("submission-owner");
+  const foreign = await owner("submission-foreign");
+  const submissionId = "dd206db2-c408-43ec-8cf1-317a1c0aa2ce";
+  const accepted = await caller.deployment.deploy({
+    ...importInput,
+    submissionId,
+  });
+  const found = await caller.deployment.submission({ submissionId });
+  assert.equal(found?.deploymentId, accepted.deploymentId);
+  assert.equal(found?.outcome, "accepted");
+  assert.ok(!JSON.stringify(found).includes("requestHash"));
+  assert.equal(await foreign.deployment.submission({ submissionId }), null);
+  await assert.rejects(
+    appRouter
+      .createCaller({ userInfo: { user: null } })
+      .deployment.submission({ submissionId }),
+    { code: "UNAUTHORIZED" },
+  );
+});
+
+test("replaying a saved submission preserves the integrated active-resource rule", async () => {
+  const caller = await owner("retired-submission");
+  const input = {
+    ...importInput,
+    submissionId: "3e8f53a0-fb71-49a7-b49a-27132bfd94b6",
+  };
+  hostUnavailable = true;
+  try {
+    const result = await caller.deployment.deploy(input);
+    await fixtures.query(
+      `UPDATE "Projects" SET "resourceStatus" = 'inactive' WHERE id = $1`,
+      [result.projectId],
+    );
+    assert.equal(
+      await caller.deployment.submission({ submissionId: input.submissionId }),
+      null,
+    );
+    await assert.rejects(caller.deployment.deploy(input), {
+      code: "NOT_FOUND",
+    });
+    await assert.rejects(
+      caller.deployment.dispatches({ appId: result.appId }),
+      { code: "NOT_FOUND" },
+    );
+  } finally {
+    hostUnavailable = false;
+  }
+});
+
+test("simultaneous duplicate imports share one complete admission", async () => {
+  const caller = await owner("concurrent-submission");
+  const input = {
+    ...importInput,
+    submissionId: "79fd06d1-3cf6-4293-ad90-f5fde58c2012",
+  };
+  const results = await Promise.all(
+    Array.from({ length: 6 }, () => caller.deployment.deploy(input)),
+  );
+  assert.equal(
+    new Set(results.map(({ deploymentId }) => deploymentId)).size,
+    1,
+  );
+  const projects = await caller.project.list();
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0]?.apps.length, 1);
+  const app = await caller.app.get({ appId: results[0]!.appId });
+  assert.equal(app.deployments.length, 1);
+  assert.equal(app.appDomains.length, 2);
+  assert.ok(app.frameworkConfig);
+});
+
+test("redeploy retries preserve the recorded fresh head even when GitHub becomes unavailable", async () => {
+  const caller = await owner("retry-redeploy");
+  const first = await caller.deployment.deploy(importInput);
+  const input = {
+    appId: first.appId,
+    submissionId: "4f09d714-f43b-4790-8df8-bc73cdd169a4",
+  };
+  branchHead = "d".repeat(40);
+  const accepted = await caller.app.redeploy(input);
+  repositoryUnavailable = true;
+  try {
+    const retried = await caller.app.redeploy(input);
+    assert.equal(retried.deploymentId, accepted.deploymentId);
+    const app = await caller.app.get({ appId: first.appId });
+    assert.equal(app.deployments.length, 2);
+    assert.equal(
+      app.deployments.find(({ id }) => id === accepted.deploymentId)?.commit,
+      "d".repeat(40),
+    );
+  } finally {
+    repositoryUnavailable = false;
+    branchHead = "a".repeat(40);
+  }
 });
 
 for (const failure of ["repository", "branch"]) {

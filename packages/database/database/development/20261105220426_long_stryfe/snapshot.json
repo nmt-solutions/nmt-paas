@@ -1,7 +1,7 @@
 {
   "dialect": "postgres",
   "id": "51bbbe99-4636-411e-9c74-ac68f853bbed",
-  "prevIds": ["38c64e49-cc13-416a-97e5-faa18517f436"],
+  "prevIds": ["ed8e9654-7b43-45e0-bafb-fd41a15b9463"],
   "version": "8",
   "ddl": [
     {
@@ -1450,6 +1450,200 @@
       "schema": "public",
       "table": "DeploymentPublications",
       "entityType": "pks"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "DeploymentDispatches",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "deploymentId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "userId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "submissionId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "requestHash",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'pending'",
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "attempts",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "nextAttemptAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lease",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "leaseUntil",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updatedAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "nextAttemptAt",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"state\" = 'pending'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "DeploymentDispatches_pending_due",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "nameExplicit": false,
+      "columns": ["deploymentId"],
+      "schemaTo": "public",
+      "tableTo": "Deployments",
+      "columnsTo": ["id"],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "DeploymentDispatches_deploymentId_Deployments_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "columns": ["deploymentId"],
+      "nameExplicit": false,
+      "name": "DeploymentDispatches_pkey",
+      "schema": "public",
+      "table": "DeploymentDispatches",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": ["userId", "submissionId"],
+      "nullsNotDistinct": false,
+      "name": "DeploymentDispatches_owner_submission",
+      "entityType": "uniques",
+      "schema": "public",
+      "table": "DeploymentDispatches"
+    },
+    {
+      "value": "\"state\" IN ('pending', 'dispatched', 'rejected')",
+      "name": "DeploymentDispatches_state",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "DeploymentDispatches"
     }
   ],
   "renames": []

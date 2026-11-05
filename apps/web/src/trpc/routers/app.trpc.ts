@@ -14,6 +14,11 @@ import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
 import { retireApp, retirementStatus } from "@/services/apps";
 import { redeployApp } from "@/services/projects";
+import {
+  deploymentSubmission,
+  dispatchSubmission,
+  existingSubmission,
+} from "@/services/deployment-dispatch";
 import { readDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import {
   DEPLOYMENT_LOG_MAX_PAGE_SIZE,
@@ -21,30 +26,6 @@ import {
 } from "@repo/database/access-layer/deployment-log-limits";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
-
-const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
-  new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new TRPCError({
-          code: "TIMEOUT",
-          message:
-            "The deployment service did not respond in time. Please try again.",
-        }),
-      );
-    }, milliseconds);
-
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 
 const requireApp = async (appId: number, userId: string) => {
   const app = await getUserApp(appId, userId);
@@ -160,9 +141,16 @@ export const appRouter = createTRPCRouter({
       retirementStatus(input.appId, ctx.userInfo.user.id),
     ),
   redeploy: authenticatedProcedure
-    .input(appIdInput)
+    .input(appIdInput.extend({ submissionId: z.uuid().optional() }))
     .mutation(async ({ ctx, input }) => {
       const app = await requireApp(input.appId, ctx.userInfo.user.id);
+      const submission = deploymentSubmission(
+        ctx.userInfo.user.id,
+        input.submissionId,
+        { operation: "redeploy", appId: input.appId },
+      );
+      if (await existingSubmission(submission))
+        return dispatchSubmission(submission);
       const previousDeployment = [...app.deployments].sort(
         (a, b) => b.id - a.id,
       )[0];
@@ -172,16 +160,14 @@ export const appRouter = createTRPCRouter({
           message: "This app has no previous deployment to redeploy.",
         });
       }
-      const deployment = await withTimeout(
-        redeployApp({
-          userId: ctx.userInfo.user.id,
-          appId: app.id,
-          repoId: app.repoId,
-          branch: previousDeployment.branch,
-        }),
-        20_000,
-      );
-      return { deploymentId: deployment.id, branch: previousDeployment.branch };
+      await redeployApp({
+        submission,
+        userId: ctx.userInfo.user.id,
+        appId: app.id,
+        repoId: app.repoId,
+        branch: previousDeployment.branch,
+      });
+      return dispatchSubmission(submission);
     }),
   getLatestSuccessDeployment: authenticatedProcedure
     .input(appIdInput)

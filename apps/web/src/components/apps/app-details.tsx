@@ -37,6 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import toast from "../toast/toast";
 import { PublicationPanel } from "./publication-panel";
 import { deploymentStatusLabel } from "@/utils/deployment-status";
+import { clearDeploymentSubmissionId, getDeploymentSubmissionId } from "@/utils/deployment-submission";
 import { CleanupStatus } from "./cleanup-status";
 import {
   appendLiveLog,
@@ -52,6 +53,8 @@ import {
 export default function AppDetails({ appId }: { appId: number }) {
   const trpc = useTRPC(); const client = useQueryClient(); const router = useRouter(); const search = useSearchParams();
   const { data: app, isLoading, isError } = useQuery({ ...trpc.app.get.queryOptions({ appId }), refetchInterval: 2_500 });
+  const { data: dispatches } = useQuery({ ...trpc.deployment.dispatches.queryOptions({ appId }), refetchInterval: 2_500 });
+  const [isResolvingSubmission, setIsResolvingSubmission] = useState(false);
   const { data: retirement } = useQuery({ ...trpc.app.retirementStatus.queryOptions({ appId }), enabled: isError, retry: false });
   const [initialSelection, setInitialSelection] = useState<{ appId: number; deploymentId: number }>();
   const newestDeploymentId = app?.deployments.reduce((id, deployment) => Math.max(id, deployment.id), 0);
@@ -66,18 +69,76 @@ export default function AppDetails({ appId }: { appId: number }) {
   const removeEnv = useMutation({ ...trpc.app.deleteEnvVar.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Environment variable removed", description: "Redeploy to update the running application.", variant: "success" }); }, onError: (error) => toast({ title: "Could not remove variable", description: error.message, variant: "error" }) });
   const removeApp = useMutation({ ...trpc.app.delete.mutationOptions(), onSuccess: (result) => { setDeleteOpen(false); client.setQueryData(trpc.app.retirementStatus.queryKey({ appId }), result); refresh(); void client.invalidateQueries({ queryKey: trpc.project.list.queryKey() }); toast({ title: "Application retired", description: result.retirement?.message ?? "Runtime cleanup pending.", variant: "success" }); }, onError: (error) => toast({ title: "Could not delete application", description: error.message, variant: "error" }) });
   const updateConfig = useMutation({ ...trpc.app.updateConfig.mutationOptions(), onSuccess: () => { setNeedsRedeploy(true); refresh(); toast({ title: "Configuration saved", description: "Redeploy to use the updated build settings.", variant: "success" }); }, onError: (error) => toast({ title: "Could not save configuration", description: error.message, variant: "error" }) });
-  const redeploy = useMutation({ ...trpc.app.redeploy.mutationOptions(), onSuccess: (result) => { setNeedsRedeploy(false); refresh(); toast({ title: "Redeployment queued", description: `Building ${result.branch} now. Opening live deployment logs.`, variant: "success" }); router.replace(`?deployment=${result.deploymentId}`); }, onError: (error) => toast({ title: "Could not queue redeployment", description: error.message.includes("timeout") ? "The deployment service did not respond in time. Please try again." : error.message, variant: "error" }) });
+  const showSubmission = (result: {
+    outcome: "accepted" | "uncertain" | "rejected";
+    deploymentId: number;
+    message: string;
+  }) => {
+    if (result.outcome !== "uncertain")
+      clearDeploymentSubmissionId(`redeploy:${appId}`);
+    setNeedsRedeploy(false);
+    void refresh();
+    void client.invalidateQueries({
+      queryKey: trpc.deployment.dispatches.queryKey({ appId }),
+    });
+    toast({
+      title:
+        result.outcome === "accepted"
+          ? "Redeployment queued"
+          : result.outcome === "rejected"
+            ? "Dispatch rejected"
+            : "Deployment saved; confirmation pending",
+      description: result.message,
+      variant: result.outcome === "accepted" ? "success" : "warning",
+    });
+    router.replace(`?deployment=${result.deploymentId}`);
+  };
+  const redeploy = useMutation({
+    ...trpc.app.redeploy.mutationOptions(),
+    onSuccess: showSubmission,
+    onError: () =>
+      toast({
+        title: "Could not confirm submission",
+        description:
+          "Its outcome is unknown. Retry to check the same submission; your retry will keep its identity.",
+        variant: "warning",
+      }),
+  });
+  const startRedeployment = async () => {
+    setIsResolvingSubmission(true);
+    const submissionId = getDeploymentSubmissionId(`redeploy:${appId}`);
+    try {
+      const existing = await client.fetchQuery({
+        ...trpc.deployment.submission.queryOptions({ submissionId }),
+        staleTime: 0,
+      });
+      if (existing) showSubmission(existing);
+      else redeploy.mutate({ appId, submissionId });
+    } catch {
+      toast({
+        title: "Could not confirm submission",
+        description:
+          "Retry to check the same submission when the service returns.",
+        variant: "warning",
+      });
+    } finally {
+      setIsResolvingSubmission(false);
+    }
+  };
+
   if (retirement?.resourceStatus === "inactive") return <section className="glass-panel mx-auto max-w-2xl space-y-4 p-8"><h1 className="text-xl font-semibold">{retirement.appName} retired</h1><p className="text-sm text-muted-foreground">The project and sibling apps remain available.</p><p role="status">{retirement.retirement?.message ?? "Runtime cleanup pending. Retry cleanup to recover."}</p><div className="flex gap-3">{retirement.retirement?.status !== "complete" && <Button disabled={removeApp.isPending} onClick={() => removeApp.mutate({ appId })}>{removeApp.isPending ? "Retrying cleanup?" : "Retry cleanup"}</Button>}<Button asChild variant="outline"><Link href="/projects">Back to projects</Link></Button></div></section>;
   if (isLoading) return <LoadingDetails />;
   if (isError || !app) return <div className="glass-panel p-8 text-center"><h1 className="font-semibold">Application unavailable</h1><p className="mt-2 text-sm text-muted-foreground">It may have been deleted or you may no longer have access.</p><Button asChild variant="outline" className="mt-5"><Link href="/projects">Back to projects</Link></Button></div>;
   const deployments = [...app.deployments].sort((a, b) => b.id - a.id); const latest = deployments[0]; const selectedDeploymentId = Number(search.get("deployment")) || (initialSelection?.appId === appId ? initialSelection.deploymentId : newestDeploymentId); const selectedDeployment = deployments.find((deployment) => deployment.id === selectedDeploymentId) ?? latest; const status = latest?.status ?? "not deployed"; const isStarted = status === "success"; const config = app.frameworkConfig;
+  const selectedDispatch = dispatches?.find((dispatch) => dispatch.deploymentId === selectedDeployment?.id);
   return <div className="mx-auto w-full max-w-7xl space-y-6 pb-10">
     <Link href="/projects" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground"><ArrowLeft className="size-4" />All projects</Link>
-    <header className="glass-panel relative overflow-hidden p-6 sm:p-8"><div className="absolute -right-20 -top-24 size-64 rounded-full bg-primary/15 blur-3xl" /><div className="relative flex flex-wrap items-start justify-between gap-5"><div className="min-w-0"><p className="text-sm font-medium text-primary">{app.project?.name ?? "Project"}</p><h1 className="mt-2 truncate text-3xl font-semibold tracking-tight sm:text-4xl">{app.appName}</h1><p className="mt-3 text-sm text-muted-foreground">Production application · deployment settings and live output</p></div><div className="flex flex-wrap items-center gap-2"><StatusBadge status={status} /><Button disabled={redeploy.isPending || !latest} onClick={() => redeploy.mutate({ appId })}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy</Button></div></div><div className="relative mt-7 flex flex-wrap gap-2">{app.appDomains.filter((domain) => domain.env === "production").map((domain) => <a key={domain.id} className="glass-row inline-flex items-center gap-2 px-3 py-2 text-sm font-medium" href={`http://${domain.domain}`} target="_blank" rel="noreferrer"><ExternalLink className="size-4 text-primary" />{domain.domain}</a>)}<span className="glass-row px-3 py-2 font-mono text-xs text-muted-foreground">{latest ? `Commit ${latest.commit.slice(0, 8)}` : "No deployment yet"}</span></div></header>
+    {selectedDispatch && selectedDispatch.state !== "dispatched" && <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm"><strong>Deployment #{selectedDispatch.deploymentId} saved. </strong>{selectedDispatch.state === "rejected" ? "Dispatch rejected by the host. Contact the operator before submitting another deployment." : `Queue confirmation pending. Automatic recovery will retry; attempts: ${selectedDispatch.attempts}. You can leave this page.`}</div>}
+    <header className="glass-panel relative overflow-hidden p-6 sm:p-8"><div className="absolute -right-20 -top-24 size-64 rounded-full bg-primary/15 blur-3xl" /><div className="relative flex flex-wrap items-start justify-between gap-5"><div className="min-w-0"><p className="text-sm font-medium text-primary">{app.project?.name ?? "Project"}</p><h1 className="mt-2 truncate text-3xl font-semibold tracking-tight sm:text-4xl">{app.appName}</h1><p className="mt-3 text-sm text-muted-foreground">Production application · deployment settings and live output</p></div><div className="flex flex-wrap items-center gap-2"><StatusBadge status={status} /><Button disabled={redeploy.isPending || isResolvingSubmission || !latest} onClick={() => void startRedeployment()}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy</Button></div></div><div className="relative mt-7 flex flex-wrap gap-2">{app.appDomains.filter((domain) => domain.env === "production").map((domain) => <a key={domain.id} className="glass-row inline-flex items-center gap-2 px-3 py-2 text-sm font-medium" href={`http://${domain.domain}`} target="_blank" rel="noreferrer"><ExternalLink className="size-4 text-primary" />{domain.domain}</a>)}<span className="glass-row px-3 py-2 font-mono text-xs text-muted-foreground">{latest ? `Commit ${latest.commit.slice(0, 8)}` : "No deployment yet"}</span></div></header>
     <div className="grid gap-4 lg:grid-cols-3"><InfoCard icon={<Box />} label="Latest deployment status" value={deploymentStatusLabel(status)} note={isStarted ? "Docker accepted the container start. Application readiness has not been checked." : "Open deployment logs to follow progress."} /><InfoCard icon={<Activity />} label="Latest deployment" value={latest ? `#${latest.id}` : "—"} note={latest ? `Branch ${latest.branch}` : "Deploy this app to get started."} /><InfoCard icon={<FileText />} label="Environment" value="Production" note={`${app.envVars.length} variable${app.envVars.length === 1 ? "" : "s"} configured`} /></div>
     <CleanupStatus cleanup={selectedDeployment?.cleanup} deploymentId={selectedDeployment?.id} />
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-6"><TabsList variant="line" className="w-full justify-start border-b border-border/70"><TabsTrigger value="overview" className="px-4 text-sm">Overview</TabsTrigger><TabsTrigger value="deployments" className="px-4 text-sm">Deployments <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{deployments.length}</span></TabsTrigger></TabsList><TabsContent value="overview" forceMount hidden={activeTab !== "overview"} className="mt-0"><div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(20rem,0.9fr)]"><div className="space-y-6">{selectedDeployment && <PublicationPanel key={`publication-${selectedDeployment.id}`} deploymentId={selectedDeployment.id} />}<DeploymentLogPanel key={selectedDeployment?.id} appId={appId} deploymentId={selectedDeployment?.id} /><LogPanel appId={appId} title="Application logs" icon={<Terminal className="size-4" />} logs={[]} empty="Runtime output will appear after the container starts." />{config && <ConfigForm appId={appId} appName={app.appName} config={config} pending={updateConfig.isPending} onSave={(data) => updateConfig.mutate(data)} />}</div>
-      <aside className="space-y-6">{needsRedeploy && <section className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5"><h2 className="font-semibold text-amber-800 dark:text-amber-200">Changes are ready</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Your saved environment or build changes need a new deployment to take effect.</p><Button className="mt-4 w-full" variant="outline" disabled={redeploy.isPending} onClick={() => redeploy.mutate({ appId })}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy now</Button></section>}<section className="glass-panel p-5"><h2 className="flex items-center gap-2 font-semibold"><Plus className="size-4 text-primary" />Environment variables</h2><p className="mt-1 text-sm text-muted-foreground">Values stay hidden after saving.</p><div className="mt-5 space-y-2">{app.envVars.length ? app.envVars.map((item) => <div className="glass-row flex items-center justify-between gap-2 px-3 py-2" key={item.id}><span className="min-w-0 truncate font-mono text-xs">{item.key}</span><Button variant="ghost" size="icon" aria-label={`Remove ${item.key}`} disabled={removeEnv.isPending} onClick={() => removeEnv.mutate({ appId, envVarId: item.id })}><Trash2 className="size-4 text-destructive" /></Button></div>) : <p className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">No variables added.</p>}</div><div className="mt-4 space-y-2"><Input value={envKey} onChange={(event) => setEnvKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))} placeholder="VARIABLE_NAME" autoCapitalize="characters" /><Input value={envValue} onChange={(event) => setEnvValue(event.target.value)} placeholder="Value" type="password" /><Button className="w-full" size="sm" disabled={!envKey || addEnv.isPending} onClick={() => addEnv.mutate({ appId, key: envKey, value: envValue })}>{addEnv.isPending && <Loader2 className="animate-spin" />}Add variable</Button></div></section><section className="rounded-3xl border border-destructive/25 bg-destructive/5 p-5"><h2 className="font-semibold text-destructive">Danger zone</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Retire this application and remove its owned runtimes. The project and sibling apps stay available.</p><Button className="mt-4" variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 />Delete app</Button></section></aside></div></TabsContent><TabsContent value="deployments" className="mt-0"><DeploymentHistory deployments={deployments} activeDeploymentId={selectedDeployment?.id} onSelect={(deploymentId) => { setActiveTab("overview"); router.replace(`?deployment=${deploymentId}`); }} /></TabsContent></Tabs>
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-6"><TabsList variant="line" className="w-full justify-start border-b border-border/70"><TabsTrigger value="overview" className="px-4 text-sm">Overview</TabsTrigger><TabsTrigger value="deployments" className="px-4 text-sm">Deployments <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{deployments.length}</span></TabsTrigger></TabsList><TabsContent value="overview" forceMount hidden={activeTab !== "overview"} className="mt-0"><div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(20rem,0.9fr)]"><div className="space-y-6">{selectedDeployment && <PublicationPanel key={`publication-${selectedDeployment.id}`} deploymentId={selectedDeployment.id} />}<DeploymentLogPanel key={`history-${selectedDeployment?.id}`} appId={appId} deploymentId={selectedDeployment?.id} /><LogPanel appId={appId} title="Application logs" icon={<Terminal className="size-4" />} logs={[]} empty="Runtime output will appear after the container starts." />{config && <ConfigForm appId={appId} appName={app.appName} config={config} pending={updateConfig.isPending} onSave={(data) => updateConfig.mutate(data)} />}</div>
+      <aside className="space-y-6">{needsRedeploy && <section className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5"><h2 className="font-semibold text-amber-800 dark:text-amber-200">Changes are ready</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Your saved environment or build changes need a new deployment to take effect.</p><Button className="mt-4 w-full" variant="outline" disabled={redeploy.isPending || isResolvingSubmission} onClick={() => void startRedeployment()}>{redeploy.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}Redeploy now</Button></section>}<section className="glass-panel p-5"><h2 className="flex items-center gap-2 font-semibold"><Plus className="size-4 text-primary" />Environment variables</h2><p className="mt-1 text-sm text-muted-foreground">Values stay hidden after saving.</p><div className="mt-5 space-y-2">{app.envVars.length ? app.envVars.map((item) => <div className="glass-row flex items-center justify-between gap-2 px-3 py-2" key={item.id}><span className="min-w-0 truncate font-mono text-xs">{item.key}</span><Button variant="ghost" size="icon" aria-label={`Remove ${item.key}`} disabled={removeEnv.isPending} onClick={() => removeEnv.mutate({ appId, envVarId: item.id })}><Trash2 className="size-4 text-destructive" /></Button></div>) : <p className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">No variables added.</p>}</div><div className="mt-4 space-y-2"><Input value={envKey} onChange={(event) => setEnvKey(event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))} placeholder="VARIABLE_NAME" autoCapitalize="characters" /><Input value={envValue} onChange={(event) => setEnvValue(event.target.value)} placeholder="Value" type="password" /><Button className="w-full" size="sm" disabled={!envKey || addEnv.isPending} onClick={() => addEnv.mutate({ appId, key: envKey, value: envValue })}>{addEnv.isPending && <Loader2 className="animate-spin" />}Add variable</Button></div></section><section className="rounded-3xl border border-destructive/25 bg-destructive/5 p-5"><h2 className="font-semibold text-destructive">Danger zone</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">Retire this application and remove its owned runtimes. The project and sibling apps stay available.</p><Button className="mt-4" variant="destructive" onClick={() => setDeleteOpen(true)}><Trash2 />Delete app</Button></section></aside></div></TabsContent><TabsContent value="deployments" className="mt-0"><DeploymentHistory deployments={deployments} activeDeploymentId={selectedDeployment?.id} onSelect={(deploymentId) => { setActiveTab("overview"); router.replace(`?deployment=${deploymentId}`); }} /></TabsContent></Tabs>
     <ConfirmDialog open={deleteOpen} onOpenChange={setDeleteOpen} title={`Delete ${app.appName}?`} description="This retires the app and removes its owned runtimes. The project and sibling apps stay available. Incomplete cleanup can be retried here." confirmLabel="Delete app" pending={removeApp.isPending} onConfirm={() => removeApp.mutate({ appId })} />
   </div>;
 }

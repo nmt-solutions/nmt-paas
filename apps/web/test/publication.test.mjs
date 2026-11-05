@@ -40,7 +40,6 @@ test(
     await new Promise((resolve) => listener.close(resolve));
     const password = "deployment-publication-fixture";
     // Tool selection for this uncached local integration harness only.
-    // eslint-disable-next-line turbo/no-undeclared-env-vars
     const redisExecutable = process.env.REDIS_SERVER_BIN || "redis-server";
     const server = spawn(
       redisExecutable,
