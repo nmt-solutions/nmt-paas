@@ -58,6 +58,7 @@ export const createDockerCommandAdapter = ({
     command: string[],
     workingDir?: string,
     stage = "Container command",
+    environment?: string[],
   ) {
     try {
       const exec = await container.exec({
@@ -66,6 +67,7 @@ export const createDockerCommandAdapter = ({
         AttachStderr: true,
         Tty: true,
         WorkingDir: workingDir,
+        Env: environment,
       });
 
       const stream = await exec.start({

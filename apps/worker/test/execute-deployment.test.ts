@@ -247,3 +247,35 @@ test("an unavailable recorded commit fails checkout and preserves the previous r
     true,
   );
 });
+
+test("a credential-removal failure prevents image commit and preserves the previous runtime", async (t) => {
+  const fixture = await deploymentFixture({
+    failCommand: "rm -rf -- /app/.git",
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Remove build credentials failed \(exit code 1\)/,
+  );
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.equal(fixture.images.size, 0);
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)?.message ?? "",
+    /Remove build credentials failed/,
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});

@@ -19,9 +19,10 @@ log storage. Tests inject fixture adapters at these external boundaries.
 - A resolved execution means Docker accepted the new runtime's start and the
   deployment success state/log were saved. It does not establish application
   readiness or a zero-downtime guarantee.
-- Execution preserves clone, recorded-commit checkout, install, environment-file
-  creation, build, image commit, and runtime start behavior. It retains the
-  process-local serialization of deployments for the same app. All callers of
+- Execution preserves clone, recorded-commit checkout, install, build, image
+  commit, and runtime start behavior. Saved configuration reaches install/build
+  and runtime through process environments; repository metadata is removed before
+  commit. It retains process-local serialization of deployments for the same app. All callers of
   that process must share the executor instance.
 - On failure, execution attempts to persist `failed` and its scrubbed diagnostic,
   then rejects with a sanitized error. Failure-reporting errors do not hide that
@@ -38,12 +39,13 @@ log storage. Tests inject fixture adapters at these external boundaries.
   not implied by the resolved promise. Previous runtimes are removed only after
   replacement start.
 
-This ticket extracts the existing behavior. It does not add durable retry
-reconciliation, recovery after persistence failure following runtime start,
-separate persisted publication/cleanup outcomes, or credential-file hardening.
+The entry point does not add durable retry reconciliation, recovery after
+persistence failure following runtime start, or separate persisted
+publication/cleanup outcomes.
 Builder preparation still precedes the existing cleanup scope; failures during
 that preparation require the later artifact-ownership work. Ticket #10 adds
 [stable repository lookup and consistent startup working directories](deployment-repository-context.md).
+Ticket #16 documents [environment delivery and image credential removal](deployment-environment-credentials.md).
 
 ## Checks and operational use
 

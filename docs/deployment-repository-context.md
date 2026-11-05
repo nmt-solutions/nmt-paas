@@ -15,8 +15,8 @@ fresh commit.
 
 The repository is cloned into `/app`. The configured root is relative to that
 directory: `./services/api` and `services/api` select `/app/services/api`; an empty
-root, `./`, or `/` selects `/app`. Installation, environment-file creation, and
-build use that directory. The committed image records the same `WORKDIR`, which
+root, `./`, or `/` selects `/app`. Installation and build use that directory, with
+saved values supplied through process environments. The committed image records the same `WORKDIR`, which
 the runtime inherits before executing the configured start command. Start commands
 can therefore use paths relative to the app root, such as `node dist/server.js`.
 
@@ -41,8 +41,8 @@ reject the execution promise for the existing queue retry policy. Builders are
 removed by the existing failure cleanup; previous and unrelated runtimes remain
 running when repository lookup or checkout fails. The shared diagnostic scope,
 command stage labels, and runtime-start success policy remain in effect.
-Environment delivery and credential-file removal are separate lifecycle work;
-this change does not add readiness checks or alter publication/cleanup recovery.
+Ticket #16 adds [environment delivery and image credential removal](deployment-environment-credentials.md).
+Execution does not add readiness checks or alter publication/cleanup recovery.
 
 ## Verification
 

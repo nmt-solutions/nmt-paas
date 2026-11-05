@@ -78,7 +78,7 @@ test(
         getDocker: async () => docker,
       }),
       getCloneUrl: async () => `/ticket-9-missing-fixture-${deploymentId}`,
-      fetchEnvVars: async () => "",
+      fetchEnvVars: async () => [],
       registry: { username: "fixture", password: "fixture-only" },
     };
 
