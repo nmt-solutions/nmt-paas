@@ -23,7 +23,12 @@ export const deploymentRouter = createTRPCRouter({
           .string({ error: "Owner must be a valid string" })
           .nonempty({ error: "Owner is required" })
           .nonoptional({ error: "Owner is required" }),
-        branch: z.string({ error: "Branch must be a string" }).optional(),
+        branch: z
+          .string({ error: "Branch must be a string" })
+          .trim()
+          .min(1, "Branch is required")
+          .optional(),
+        projectName: z.string().trim().min(1).max(80).optional(),
         frameworkConfig: z
           .object({
             framework: z
@@ -76,6 +81,8 @@ export const deploymentRouter = createTRPCRouter({
           repoId,
           repo,
           owner,
+          projectName: input.projectName,
+          branch,
           envVars,
           frameworkConfig,
         });
