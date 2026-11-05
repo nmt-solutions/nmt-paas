@@ -9,6 +9,57 @@ import { getUserAppInstall } from "@repo/database/access-layer/github.dal";
 import { TRPCError } from "@trpc/server";
 import { App, Octokit, RequestError } from "octokit";
 
+export function requireGithubUserAuthorization() {
+  const clientId = env.variables.GITHUB_APP_CLIENT_ID;
+  const clientSecret = env.variables.GITHUB_APP_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "GitHub user authorization is not configured. Contact the operator.",
+    });
+  }
+  return { clientId, clientSecret };
+}
+
+export async function verifyGithubInstallationAccess(
+  installationId: number,
+  code: string,
+) {
+  const app = new App({
+    appId: env.variables.GITHUB_APP_ID,
+    privateKey: env.variables.GITHUB_APP_PRIVATE_KEY,
+    oauth: requireGithubUserAuthorization(),
+  });
+  try {
+    const userOctokit = await app.oauth.getUserOctokit({ code });
+    for await (const { data } of userOctokit.paginate.iterator(
+      "GET /user/installations",
+      { per_page: 100 },
+    )) {
+      const installation = data.find((item) => item.id === installationId);
+      if (installation) {
+        if (
+          installation.app_id === env.variables.GITHUB_APP_ID &&
+          !installation.suspended_at
+        ) {
+          return;
+        }
+        break;
+      }
+    }
+  } catch {
+    // Provider errors may contain authorization codes, tokens, or request data.
+    throw new TRPCError({
+      code: "BAD_GATEWAY",
+      message: "Unable to verify GitHub authorization. Start Connect Github again.",
+    });
+  }
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "This GitHub installation is not accessible to the authorized GitHub user.",
+  });
+}
+
 export async function getUserGithubAppInstallationId(userId: string) {
   const { data: appInstall, error: appInstallError } = await tryCatch(
     getUserAppInstall(userId),

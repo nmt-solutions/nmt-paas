@@ -29,6 +29,8 @@ const EnvVarsSchema = z.object({
     .string()
     .nonempty({ error: "GITHUB_APP_SLUG is required." })
     .nonoptional({ error: "GITHUB_APP_SLUG is required." }),
+  GITHUB_APP_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_APP_CLIENT_SECRET: z.string().min(1).optional(),
   GITHUB_APP_PRIVATE_KEY: z
     .string()
     .nonempty({ error: "GITHUB_APP_PRIVATE_KEY is required." })
