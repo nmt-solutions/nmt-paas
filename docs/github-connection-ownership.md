@@ -85,7 +85,8 @@ $env:AUTH_TEST_DATABASE_URL = 'postgres://fixture@127.0.0.1:5432/disposable_test
 npm run test:auth --workspace web
 ```
 
-Use a disposable local PostgreSQL database with permission to create/drop schemas.
+Use a disposable local PostgreSQL database with permission to create/drop schemas
+and a connection URL without query parameters.
 The runner refuses nonlocal URLs, creates a unique schema, applies the committed
 development migrations, and drops only that schema in `finally`. Its fixtures
 override application environment values; developer `.env` files are not loaded.

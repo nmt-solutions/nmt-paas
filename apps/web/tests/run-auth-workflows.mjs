@@ -14,6 +14,9 @@ const url = new URL(connectionString);
 if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
   throw new Error("Authentication tests require a local PostgreSQL database.");
 }
+if (url.search) {
+  throw new Error("Test connection URLs must not include query overrides.");
+}
 const client = new Client({ connectionString });
 const schema = `auth_test_${randomUUID().replaceAll("-", "")}`;
 await client.connect();
