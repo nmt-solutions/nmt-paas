@@ -8,6 +8,8 @@
       "outputs": [".next/**", "!.next/cache/**", "dist/**"],
       "env": [
         "APP_ENV",
+        "NEXT_RUNTIME",
+        "NEXT_PHASE",
         "WORKOS_CLIENT_ID",
         "WORKOS_API_KEY",
         "WORKOS_COOKIE_PASSWORD",
@@ -46,6 +48,11 @@
       "dependsOn": ["^build"],
       "cache": false,
       "env": ["IMPORT_TEST_DATABASE_URL"]
+    },
+    "test:dispatch": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": ["IMPORT_TEST_DATABASE_URL", "REDIS_SERVER_BIN"]
     },
     "check-types": {
       "dependsOn": ["^check-types"]

@@ -1,16 +1,46 @@
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { getAppByRepoId } from "@repo/database/access-layer/apps.dal";
+import {
+  getAppByRepoId,
+  getUserApp,
+} from "@repo/database/access-layer/apps.dal";
+import {
+  getDeploymentSubmission,
+  getAppDispatches,
+} from "@repo/database/access-layer/deployment-dispatch.dal";
 import {
   deployProject,
   initializeNewProjectAndDeploy,
 } from "@/services/projects";
 import { TRPCError } from "@trpc/server";
+import {
+  deploymentSubmission,
+  dispatchSubmission,
+  existingSubmission,
+  submissionResult,
+} from "@/services/deployment-dispatch";
 
 export const deploymentRouter = createTRPCRouter({
+  submission: authenticatedProcedure
+    .input(z.object({ submissionId: z.uuid() }))
+    .query(async ({ ctx, input }) => {
+      const accepted = await getDeploymentSubmission(
+        ctx.userInfo.user.id,
+        input.submissionId,
+      );
+      return accepted ? submissionResult(accepted) : null;
+    }),
+  dispatches: authenticatedProcedure
+    .input(z.object({ appId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!(await getUserApp(input.appId, ctx.userInfo.user.id)))
+        throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+      return getAppDispatches(input.appId, ctx.userInfo.user.id);
+    }),
   deploy: authenticatedProcedure
     .input(
       z.object({
+        submissionId: z.uuid().optional(),
         repoId: z
           .number({ error: "Repo Id must be a positive integer" })
           .nonnegative({ error: "Repo Id must be a positive integer" })
@@ -63,6 +93,13 @@ export const deploymentRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.userInfo.user.id;
+      const { submissionId, ...request } = input;
+      const submission = deploymentSubmission(userId, submissionId, {
+        operation: "deploy",
+        ...request,
+      });
+      if (await existingSubmission(submission))
+        return dispatchSubmission(submission);
       const { repoId, repo, owner, branch, envVars, frameworkConfig } = input;
 
       const app = await getAppByRepoId(repoId, userId);
@@ -76,7 +113,8 @@ export const deploymentRouter = createTRPCRouter({
           });
         }
 
-        const initialized = await initializeNewProjectAndDeploy({
+        await initializeNewProjectAndDeploy({
+          submission,
           userId,
           repoId,
           repo,
@@ -87,12 +125,7 @@ export const deploymentRouter = createTRPCRouter({
           frameworkConfig,
         });
 
-        return {
-          message: "Deployment Queued",
-          appId: initialized.app.id,
-          projectId: initialized.project.id,
-          deploymentId: initialized.deployment.id,
-        };
+        return dispatchSubmission(submission);
       }
 
       if (!branch?.trim()) {
@@ -102,7 +135,8 @@ export const deploymentRouter = createTRPCRouter({
         });
       }
 
-      const deployment = await deployProject({
+      await deployProject({
+        submission,
         userId,
         repoId,
         repo,
@@ -111,11 +145,6 @@ export const deploymentRouter = createTRPCRouter({
         appId: app.id,
       });
 
-      return {
-        message: "Deployment Queued",
-        appId: app.id,
-        projectId: app.projectId,
-        deploymentId: deployment.id,
-      };
+      return dispatchSubmission(submission);
     }),
 });

@@ -7,6 +7,11 @@ import {
   Projects,
 } from "../schema";
 import { createAppDomains } from "./app-domains.dal";
+import {
+  lockDeploymentSubmission,
+  recordDeploymentDispatch,
+  type Submission,
+} from "./deployment-dispatch.dal";
 
 /** Commit the related local setup together; callers resolve GitHub before this
  * operation and contact the deployment host only after it commits. */
@@ -27,8 +32,11 @@ export const createProjectImport = (params: {
     port: number;
   };
   envVars: { key: string; encryptedValue: string }[];
+  submission: Submission;
 }) =>
   database.transaction(async (tx) => {
+    const existing = await lockDeploymentSubmission(tx, params.submission);
+    if (existing) return existing;
     const { userId, repoId } = params;
     const [project] = await tx
       .insert(Projects)
@@ -86,6 +94,8 @@ export const createProjectImport = (params: {
       })
       .returning();
     if (!deployment) throw new Error("Deployment creation failed");
+
+    await recordDeploymentDispatch(tx, params.submission, deployment.id);
 
     return { project, app, deployment };
   });

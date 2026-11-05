@@ -2,7 +2,8 @@
 
 import { FrameworkConfigPreset } from "@/models/framework";
 import { useTRPC } from "@/trpc/client";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { clearDeploymentSubmissionId, getDeploymentSubmissionId } from "@/utils/deployment-submission";
 import {
   ChevronDown,
   File,
@@ -77,6 +78,9 @@ const ImportRepository = ({
   const [installCommand, setInstallCommand] = useState("");
 
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const [isCheckingSubmission, setIsCheckingSubmission] = useState(false);
+  const submissionScope = `import:${repoId}:${branch}`;
   const router = useRouter();
 
   const { data, isPending, isError, error } = useQuery(
@@ -151,7 +155,22 @@ const ImportRepository = ({
     });
   };
 
-  const deployProject = () => {
+  const showSubmission = (result: { outcome: "accepted" | "uncertain" | "rejected"; projectId: number; appId: number; deploymentId: number; message: string }) => {
+    if (result.outcome !== "uncertain") clearDeploymentSubmissionId(submissionScope);
+    toast({ title: result.outcome === "accepted" ? "Deployment queued" : result.outcome === "rejected" ? "Dispatch rejected" : "Deployment saved; confirmation pending", description: result.message, variant: result.outcome === "accepted" ? "success" : "warning" });
+    router.push(`/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`);
+  };
+
+  const deployProject = async () => {
+    const submissionId = getDeploymentSubmissionId(submissionScope);
+    setIsCheckingSubmission(true);
+    try {
+      const existing = await queryClient.fetchQuery({ ...trpc.deployment.submission.queryOptions({ submissionId }), staleTime: 0 });
+      if (existing) { showSubmission(existing); return; }
+    } catch {
+      toast({ title: "Could not confirm submission", description: "Retry to check the same submission when the service returns.", variant: "warning" });
+      return;
+    } finally { setIsCheckingSubmission(false); }
     const envVarsArray = envVarsFields
       .map((id) => envVars[id])
       .filter((ev) => ev?.key && ev?.value)
@@ -168,6 +187,7 @@ const ImportRepository = ({
 
     deploy(
       {
+        submissionId,
         repoId: parseInt(repoId),
         repo,
         owner: data?.repository.owner.name ?? "",
@@ -185,19 +205,12 @@ const ImportRepository = ({
       {
         onError: (err) => {
           toast({
-            title: "Deployment Error",
-            description: err.message,
-            variant: "error",
+            title: "Could not confirm submission",
+            description: `${err.message} Retry with this same submission to check whether it was saved.`,
+            variant: "warning",
           });
         },
-        onSuccess: (result) => {
-          toast({
-            title: "Deployment Queued",
-            description: "Opening the deployment details and live logs.",
-            variant: "success",
-          });
-          router.push(`/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`);
-        },
+        onSuccess: showSubmission,
       },
     );
   };
@@ -584,7 +597,7 @@ const ImportRepository = ({
 
         <div className="my-4">
           <Button
-            disabled={isDeploying}
+            disabled={isDeploying || isCheckingSubmission}
             className="w-full rounded-lg"
             onClick={deployProject}
           >

@@ -1,11 +1,14 @@
 import { tryCatch } from "@/utils/try-catch";
-import { createDeployment } from "@repo/database/access-layer/deployment.dal";
+import {
+  admitDeployment,
+  type Submission,
+} from "@repo/database/access-layer/deployment-dispatch.dal";
 import { createProjectImport } from "@repo/database/access-layer/project-import.dal";
 import { TRPCError } from "@trpc/server";
 import { Octokit } from "octokit";
 import { encrypt } from "./env-vars";
 import { getUserGithubOctokit } from "./github";
-import cpApiClient from "./cp-api-client";
+import { admissionError } from "./deployment-dispatch";
 
 export const deployProject = async (params: {
   octokit?: Octokit;
@@ -15,6 +18,7 @@ export const deployProject = async (params: {
   repo: string;
   branch: string;
   appId: number;
+  submission: Submission;
 }) => {
   const { appId, userId, owner, repoId, repo, branch } = params;
 
@@ -38,32 +42,28 @@ export const deployProject = async (params: {
 
   const commit = commitsData.data;
 
-  const deployment = await createDeployment({
-    appId,
-    branch: branch,
-    commit: commit.sha,
-    createdBy: userId,
-    userId,
-    repoId,
-    env: "production",
-  });
+  const { data: deployment, error: admissionFailure } = await tryCatch(
+    admitDeployment(
+      {
+        appId,
+        branch: branch,
+        commit: commit.sha,
+        createdBy: userId,
+        userId,
+        repoId,
+        env: "production",
+      },
+      params.submission,
+    ),
+  );
+
+  if (admissionFailure) throw admissionError(admissionFailure);
 
   if (!deployment) {
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
       message: "Unable to create a deployment",
     });
-  }
-
-  const response = await cpApiClient.queueDeployment(
-    deployment.id,
-    params.userId,
-  );
-
-  console.log("response", response);
-
-  if (response.status === "error") {
-    throw new Error(response.message);
   }
 
   return deployment;
@@ -75,15 +75,19 @@ export const redeployApp = async ({
   appId,
   repoId,
   branch,
+  submission,
 }: {
   userId: string;
   appId: number;
   repoId: number;
   branch: string;
+  submission: Submission;
 }) => {
   const { octokit } = await getUserGithubOctokit(userId);
   const { data: repository, error } = await tryCatch(
-    octokit.request("GET /repositories/{repository_id}", { repository_id: repoId }),
+    octokit.request("GET /repositories/{repository_id}", {
+      repository_id: repoId,
+    }),
   );
 
   if (error || !repository.data.owner?.login) {
@@ -101,6 +105,7 @@ export const redeployApp = async ({
     owner: repository.data.owner.login,
     repo: repository.data.name,
     branch,
+    submission,
   });
 };
 
@@ -113,6 +118,7 @@ export const initializeNewProjectAndDeploy = async ({
   branch,
   envVars,
   frameworkConfig,
+  submission,
 }: {
   userId: string;
   repoId: number;
@@ -130,6 +136,7 @@ export const initializeNewProjectAndDeploy = async ({
     outputDirectory: string;
     port: number;
   };
+  submission: Submission;
 }) => {
   const { octokit } = await getUserGithubOctokit(userId);
 
@@ -165,6 +172,7 @@ export const initializeNewProjectAndDeploy = async ({
     // Keep the established encrypted format; plaintext never enters persistence.
     Promise.resolve().then(() =>
       createProjectImport({
+        submission,
         userId,
         repoId,
         projectName: projectName ?? `${repository.name.toLowerCase()}-project`,
@@ -181,17 +189,11 @@ export const initializeNewProjectAndDeploy = async ({
   );
   if (setupError) {
     // Database errors can include SQL parameters and encrypted configuration.
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message:
-        "Unable to initialize project. Check your projects before retrying.",
-    });
+    throw admissionError(
+      setupError,
+      "Unable to initialize project. Check your projects before retrying.",
+    );
   }
 
-  const response = await cpApiClient.queueDeployment(
-    initialized.deployment.id,
-    userId,
-  );
-  if (response.status === "error") throw new Error(response.message);
   return initialized;
 };
