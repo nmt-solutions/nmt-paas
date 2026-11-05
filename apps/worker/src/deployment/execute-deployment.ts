@@ -70,12 +70,13 @@ export type DeploymentExecutionDependencies = {
     command: string[],
     workingDirectory?: string,
     stage?: string,
+    environment?: string[],
   ) => Promise<void>;
   getCloneUrl: (userId: string, repositoryId: number) => Promise<string>;
   fetchEnvVars: (
     projectId: number,
     env: "production" | "preview",
-  ) => Promise<string>;
+  ) => Promise<{ key: string; value: string }[]>;
   registry: { username: string; password: string };
 };
 
@@ -454,15 +455,24 @@ export const createDeploymentExecutor = ({
     let deploymentContainer: import("dockerode").Container | undefined;
 
     let deploymentContainerStarted = false;
-    let environmentLoaded = false;
+    let environment: string[] | undefined;
+
+    const loadEnvironment = async () => {
+      if (!environment) {
+        const envVars = await fetchEnvVars(
+          deployment.app!.projectId,
+          deployment.env,
+        );
+        registerDiagnosticSecrets(...envVars.map(({ value }) => value));
+        environment = envVars.map(({ key, value }) => `${key}=${value}`);
+      }
+      return environment;
+    };
 
     const finishRuntime = async (container: Docker.Container) => {
       // Recovered attempts have a fresh diagnostic scope. Load configured
       // secrets before attaching runtime output even when no build was needed.
-      if (!environmentLoaded) {
-        await fetchEnvVars(deployment.app!.projectId, deployment.env);
-        environmentLoaded = true;
-      }
+      await loadEnvironment();
       await updateDeployment({ id: deploymentId, status: "success" }, userId);
       const startMessage = `Container started for ${appName} at ${appDomain}. Application readiness has not been checked.`;
       await createDeploymentLogs({
@@ -546,8 +556,7 @@ export const createDeploymentExecutor = ({
           throw new Error("Image name belongs to an unidentified deployment");
         }
         committedImageId = image.Id;
-        await fetchEnvVars(deployment.app.projectId, deployment.env);
-        environmentLoaded = true;
+        await loadEnvironment();
       } catch (error) {
         if (
           !(
@@ -594,6 +603,13 @@ export const createDeploymentExecutor = ({
         console.log(`Cloning repository for ${appName}...`);
 
         const cloneUrl = await getCloneUrl(userId, deployment.repoId);
+        if (URL.canParse(cloneUrl)) {
+          const credentials = new URL(cloneUrl);
+          registerDiagnosticSecrets(
+            decodeURIComponent(credentials.username),
+            decodeURIComponent(credentials.password),
+          );
+        }
 
         await executeCommand(
           builderContainer,
@@ -629,6 +645,10 @@ export const createDeploymentExecutor = ({
          */
         const rootDirectory = getRootDirectory(frameworkConfig.rootDirectory);
 
+        // Supply values without storing them in builder configuration or
+        // generating a secret file.
+        await loadEnvironment();
+
         /*
          * Install.
          */
@@ -653,6 +673,7 @@ export const createDeploymentExecutor = ({
           ["sh", "-c", installCommand],
           rootDirectory,
           "Install dependencies",
+          environment,
         );
 
         await createDeploymentLogs({
@@ -660,28 +681,6 @@ export const createDeploymentExecutor = ({
           message: "Project dependencies installed successfully.",
           createdBy: userId,
         });
-
-        /*
-         * Environment variables.
-         */
-        const envVars = await fetchEnvVars(
-          deployment.app!.projectId,
-          deployment.env,
-        );
-        environmentLoaded = true;
-
-        await executeCommand(
-          builderContainer,
-          [
-            "sh",
-            "-c",
-            `cat > .env << 'EOF'
-          ${envVars}
-          EOF`,
-          ],
-          rootDirectory,
-          "Configure environment",
-        );
 
         /*
          * Build.
@@ -707,6 +706,7 @@ export const createDeploymentExecutor = ({
           ["sh", "-c", buildCommand],
           rootDirectory,
           "Build application",
+          environment,
         );
 
         await createDeploymentLogs({
@@ -714,6 +714,16 @@ export const createDeploymentExecutor = ({
           message: "Application built successfully.",
           createdBy: userId,
         });
+
+        // Clone URLs and reflogs can retain installation credentials. Remove
+        // repository metadata only after tools have finished building from it.
+        // A failed removal must prevent committing or starting this image.
+        await executeCommand(
+          builderContainer,
+          ["rm", "-rf", "--", "/app/.git"],
+          "/app",
+          "Remove build credentials",
+        );
 
         /*
          * Commit the builder container into a deployable image.
@@ -759,6 +769,8 @@ export const createDeploymentExecutor = ({
         name: deploymentContainerName(deploymentId),
 
         Image: imageName,
+
+        Env: environment,
 
         Labels: {
           "traefik.enable": "true",

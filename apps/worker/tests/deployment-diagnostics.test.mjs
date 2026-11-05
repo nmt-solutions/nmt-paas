@@ -124,19 +124,22 @@ test(
         start: async () => {},
         remove: async () => {},
         inspect: async () => ({ Name: `/builder-${deploymentId}` }),
-        exec: async ({ Cmd, Tty }) => {
+        exec: async ({ Cmd, Tty, Env }) => {
           const command = Cmd.join(" ");
           const fails =
             failureStage === "clone"
               ? command.includes("git clone")
-              : command.includes("cat > .env");
+              : command.includes("npm run build");
+          if (fails && failureStage === "environment") {
+            assert.ok(Env.includes("APP_PASSWORD=fixture-app-secret-value"));
+          }
           return {
             start: async () => {
               const chunks =
                 fails && failureStage === "environment"
                   ? [
                       "configuration rejected fixture-app-",
-                      "secret-value\ncheck file permissions\n",
+                      "secret-value\ncheck build configuration\n",
                     ]
                   : fails
                     ? [
@@ -306,11 +309,8 @@ test(
       !envDiagnostics.includes("fixture-app-secret-value"),
       "configured environment value leaked through production diagnostics",
     );
-    assert.match(
-      envDiagnostics,
-      /Configure environment failed \(exit code 128\)/,
-    );
-    assert.match(envMessages, /check file permissions/);
+    assert.match(envDiagnostics, /Build application failed \(exit code 128\)/);
+    assert.match(envMessages, /check build configuration/);
     assert.match(envMessages, /\[REDACTED\]/);
 
     failureStage = "authentication";
