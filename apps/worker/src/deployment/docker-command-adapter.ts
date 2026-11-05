@@ -41,6 +41,10 @@ export const createDockerCommandAdapter = ({
         Tty: true,
         WorkingDir: "/app",
         name: `builder-${deploymentId}`,
+        Labels: {
+          "nmt.deployment-id": String(deploymentId),
+          "nmt.artifact": "builder",
+        },
       });
 
       onAcquired(container);

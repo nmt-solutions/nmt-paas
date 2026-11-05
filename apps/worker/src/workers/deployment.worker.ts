@@ -39,7 +39,7 @@ const executeDeployment = createDeploymentExecutor({
   },
 });
 
-const worker = new Worker<DeploymentRequest>(
+export const worker = new Worker<DeploymentRequest>(
   "deployment-queue",
 
   async (job) => executeDeployment(job.data),

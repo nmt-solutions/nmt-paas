@@ -18,6 +18,7 @@ export async function deploymentFixture({
   failCommit = false,
   failRemove = {},
   disappearOnRemove = [],
+  beforeRemove,
 }: {
   failCommand?: string;
   source?: {
@@ -32,6 +33,7 @@ export async function deploymentFixture({
   failCommit?: boolean;
   failRemove?: Record<string, string>;
   disappearOnRemove?: string[];
+  beforeRemove?: (id: string) => Promise<void>;
 } = {}) {
   const containers = new Map([
     [
@@ -56,7 +58,12 @@ export async function deploymentFixture({
   const configurations = new Map<string, Docker.ContainerCreateOptions>();
   const images = new Map<
     string,
-    { id: string; changes: string[]; artifact?: string }
+    {
+      id: string;
+      changes: string[];
+      artifact?: string;
+      labels?: Record<string, string>;
+    }
   >();
   const execs = new Map<
     string,
@@ -75,6 +82,9 @@ export async function deploymentFixture({
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(value === undefined ? undefined : JSON.stringify(value));
     };
+
+    if (url.pathname === "/auth")
+      return send(200, { Status: "Login Succeeded" });
 
     if (url.pathname === "/containers/create") {
       const name = url.searchParams.get("name")!;
@@ -165,8 +175,26 @@ export async function deploymentFixture({
         id: "fixture-image",
         changes: url.searchParams.getAll("changes"),
         artifact,
+        labels: {
+          ...configurations.get(url.searchParams.get("container")!)?.Labels,
+          ...Object.fromEntries(
+            url.searchParams
+              .getAll("changes")
+              .filter((change) => change.startsWith("LABEL "))
+              .map((change) => change.slice(6).split("=")),
+          ),
+        },
       });
       return send(201, { Id: "fixture-image" });
+    }
+    if (url.pathname.startsWith("/images/") && url.pathname.endsWith("/json")) {
+      const id = decodeURIComponent(
+        url.pathname.slice("/images/".length, -"/json".length),
+      );
+      const image = images.get(id);
+      return image
+        ? send(200, { Id: image.id, Config: { Labels: image.labels ?? {} } })
+        : send(404, { message: "No such image" });
     }
     if (request.method === "DELETE" && url.pathname.startsWith("/images/")) {
       const id = decodeURIComponent(url.pathname.slice("/images/".length));
@@ -198,6 +226,7 @@ export async function deploymentFixture({
       const container = containers.get(id);
       if (!container) return send(404, { message: "No such container" });
       if (request.method === "DELETE") {
+        await beforeRemove?.(id);
         if (failRemove[id]) return send(500, { message: failRemove[id] });
         containers.delete(id);
         if (disappearOnRemove.includes(id))
@@ -296,11 +325,20 @@ export async function deploymentFixture({
   };
   const logs: { deploymentId: number; message: string; createdBy: string }[] =
     [];
+  const deployments = new Map([[deploymentId, deployment]]);
   const database = {
-    getDeployment: async (id: number) =>
-      id === deploymentId ? deployment : undefined,
+    getDeployment: async (id: number) => deployments.get(id),
+    createDeployment: async (id: number, appId = 7) => {
+      const next = structuredClone(deployment);
+      next.id = id;
+      next.appId = appId;
+      if (appId !== 7) next.app.appDomains[0]!.domain = `app-${appId}.invalid`;
+      deployments.set(id, next);
+      return next;
+    },
     updateDeployment: async (params: { id: number; status: string }) => {
-      deployment.status = params.status;
+      const record = deployments.get(params.id);
+      if (record) record.status = params.status;
     },
     createDeploymentLogs: async (log: (typeof logs)[number]) => {
       logs.push(log);

@@ -109,10 +109,8 @@ export const createDeploymentExecutor = ({
       release = resolve;
     });
 
-    deploymentLocks.set(
-      appId,
-      previous.then(() => current),
-    );
+    const tail = previous.then(() => current);
+    deploymentLocks.set(appId, tail);
 
     await previous;
 
@@ -121,7 +119,7 @@ export const createDeploymentExecutor = ({
     } finally {
       release();
 
-      if (deploymentLocks.get(appId) === current) {
+      if (deploymentLocks.get(appId) === tail) {
         deploymentLocks.delete(appId);
       }
     }
@@ -200,64 +198,17 @@ export const createDeploymentExecutor = ({
 
       const labels = container.Labels ?? {};
 
-      if (labels["nmt.app-id"] === String(appId)) {
-        return true;
+      if (labels["nmt.app-id"] !== undefined) {
+        return labels["nmt.app-id"] === String(appId);
       }
 
       return Object.entries(labels).some(
         ([label, value]) =>
           label.startsWith("traefik.http.routers.deployment-") &&
           label.endsWith(".rule") &&
-          value.includes(appDomain),
+          value === `Host(\`${appDomain}\`)`,
       );
     });
-  };
-
-  const removeContainers = async (
-    docker: Docker,
-    containers: DeploymentContainer[],
-  ) => {
-    if (containers.length === 0) {
-      return;
-    }
-
-    await Promise.allSettled(
-      containers.map(async (container) => {
-        try {
-          await docker.getContainer(container.Id).remove({
-            force: true,
-          });
-
-          console.log(`Removed old deployment container ${container.Id}`);
-        } catch (error) {
-          console.error(
-            `Failed to remove container ${container.Id}:`,
-            safeDiagnosticError(error),
-          );
-        }
-      }),
-    );
-  };
-
-  const removeImage = async (
-    docker: Docker,
-    imageName: string,
-    message: string,
-  ) => {
-    try {
-      const image = docker.getImage(imageName);
-
-      await image.remove({
-        force: true,
-      });
-
-      console.log(message);
-    } catch (error) {
-      console.error(
-        `Failed to remove image ${imageName}:`,
-        safeDiagnosticError(error),
-      );
-    }
   };
 
   const streamDeploymentLogs = async (
@@ -406,56 +357,6 @@ export const createDeploymentExecutor = ({
     }
   };
 
-  const cleanupDeployment = async ({
-    docker,
-    builderContainer,
-    imageName,
-    oldContainers,
-    deploymentContainerStarted,
-    deploymentId,
-  }: {
-    docker: Docker;
-    builderContainer: import("dockerode").Container;
-    imageName: string;
-    oldContainers: DeploymentContainer[];
-    deploymentContainerStarted: boolean;
-    deploymentId: number;
-  }) => {
-    /*
-     * Builder containers are temporary.
-     */
-    try {
-      await builderContainer.remove({
-        force: true,
-      });
-
-      console.log(`Removed builder container for deployment ${deploymentId}`);
-    } catch (error) {
-      console.error(
-        `Failed to remove builder container for deployment ${deploymentId}:`,
-        safeDiagnosticError(error),
-      );
-    }
-
-    /*
-     * Only remove the old containers after the new deployment
-     * successfully started.
-     */
-    if (deploymentContainerStarted) {
-      await removeContainers(docker, oldContainers);
-    } else {
-      /*
-       * If the new deployment never started, remove its image.
-       * The old application remains untouched.
-       */
-      await removeImage(
-        docker,
-        imageName,
-        `Removed failed deployment image: ${imageName}`,
-      );
-    }
-  };
-
   const cleanupFailedArtifact = async (
     deploymentId: number,
     userId: string,
@@ -464,6 +365,7 @@ export const createDeploymentExecutor = ({
   ) => {
     try {
       await remove();
+      return true;
     } catch (error) {
       if (
         typeof error === "object" &&
@@ -471,7 +373,7 @@ export const createDeploymentExecutor = ({
         "statusCode" in error &&
         error.statusCode === 404
       )
-        return;
+        return true;
       const message = safeDiagnosticError(
         error,
         `Cleanup failed for ${artifact}`,
@@ -489,12 +391,16 @@ export const createDeploymentExecutor = ({
           safeDiagnosticError(logError),
         );
       }
+      return false;
     }
   };
 
-  const deploy = async (userId: string, deploymentId: number) => {
-    const deployment = await getDeployment(deploymentId);
-
+  const deploy = async (
+    userId: string,
+    deploymentId: number,
+    deployment: DeploymentSnapshot | undefined,
+    onRuntimeStarted: () => void,
+  ) => {
     if (!deployment) {
       throw new Error("Deployment not found");
     }
@@ -517,31 +423,127 @@ export const createDeploymentExecutor = ({
       throw new Error("Framework configuration not found");
     }
 
-    return withAppLock(deployment.appId, async () => {
-      const appName = deployment.app?.appName ?? "application";
+    const appName = deployment.app?.appName ?? "application";
 
-      const appPort = frameworkConfig.port;
-      const installCommand = frameworkConfig.installCommand;
-      const buildCommand = frameworkConfig.buildCommand;
-      const startCommand = frameworkConfig.startCommand;
+    const appPort = frameworkConfig.port;
+    const installCommand = frameworkConfig.installCommand;
+    const buildCommand = frameworkConfig.buildCommand;
+    const startCommand = frameworkConfig.startCommand;
 
-      const githubUserName = registry.username.toLowerCase();
+    const githubUserName = registry.username.toLowerCase();
 
-      const docker = await getDocker();
+    const docker = await getDocker();
 
-      const imageName = `ghcr.io/${githubUserName}/${deploymentId}:${deploymentId}`;
+    const imageName = `ghcr.io/${githubUserName}/${deploymentId}:${deploymentId}`;
 
-      let builderContainer: Docker.Container | undefined;
+    let builderContainer: Docker.Container | undefined;
 
-      let committedImageId: string | undefined;
+    let committedImageId: string | undefined;
 
-      let deploymentContainer: import("dockerode").Container | undefined;
+    let deploymentContainer: import("dockerode").Container | undefined;
 
-      let deploymentContainerStarted = false;
+    let deploymentContainerStarted = false;
 
-      let oldContainers: DeploymentContainer[] = [];
+    const finishRuntime = async (container: Docker.Container) => {
+      await updateDeployment({ id: deploymentId, status: "success" }, userId);
+      await createDeploymentLogs({
+        deploymentId,
+        message: `${appName} deployed successfully at ${appDomain}.`,
+        createdBy: userId,
+      });
+      const oldContainers = await getDeploymentContainers(
+        docker,
+        deployment.appId,
+        deploymentId,
+        appDomain,
+      );
+      // Replacement and retirement stay within the same app lock.
+      const removals = oldContainers.map((container) =>
+        cleanupFailedArtifact(
+          deploymentId,
+          userId,
+          `prior runtime ${container.Id}`,
+          () => docker.getContainer(container.Id).remove({ force: true }),
+        ),
+      );
+      if (builderContainer) {
+        const builder = builderContainer;
+        removals.push(
+          cleanupFailedArtifact(
+            deploymentId,
+            userId,
+            `builder ${builder.id}`,
+            () => builder.remove({ force: true }),
+          ),
+        );
+      }
+      if ((await Promise.all(removals)).some((removed) => !removed)) {
+        throw new Error("Artifact cleanup incomplete; retry this deployment");
+      }
+      void Promise.allSettled([
+        streamDeploymentLogs(docker, container, deploymentId, userId),
+        pushImage(docker, imageName, deploymentId),
+      ]);
+    };
 
+    try {
+      const artifacts = await docker.listContainers({ all: true });
+      const builder = artifacts.find(
+        (container) =>
+          container.Names.includes(`/builder-${deploymentId}`) &&
+          container.Labels?.["nmt.deployment-id"] === String(deploymentId) &&
+          container.Labels?.["nmt.artifact"] === "builder",
+      );
+      if (builder) builderContainer = docker.getContainer(builder.Id);
+      const existing = artifacts.find((container) =>
+        container.Names.includes(`/${deploymentContainerName(deploymentId)}`),
+      );
+      if (existing) {
+        if (
+          existing.Labels?.["nmt.deployment-id"] !== String(deploymentId) ||
+          existing.Labels?.["nmt.app-id"] !== String(deployment.appId)
+        ) {
+          throw new Error("Runtime name belongs to an unidentified deployment");
+        }
+        const container = docker.getContainer(existing.Id);
+        // A failed inspection does not transfer cleanup ownership of a runtime
+        // that may already be serving traffic.
+        const details = await container.inspect();
+        deploymentContainer = container;
+        if (!details.State.Running) await deploymentContainer.start();
+        deploymentContainerStarted = true;
+        onRuntimeStarted();
+        await finishRuntime(deploymentContainer);
+        return;
+      }
       try {
+        const image = await docker.getImage(imageName).inspect();
+        if (
+          image.Config?.Labels?.["nmt.deployment-id"] !==
+            String(deploymentId) ||
+          image.Config?.Labels?.["nmt.artifact"] !== "image"
+        ) {
+          throw new Error("Image name belongs to an unidentified deployment");
+        }
+        committedImageId = image.Id;
+      } catch (error) {
+        if (
+          !(
+            typeof error === "object" &&
+            error !== null &&
+            "statusCode" in error &&
+            error.statusCode === 404
+          )
+        )
+          throw error;
+      }
+      if (!committedImageId) {
+        // A partial build is not a reusable filesystem. Rebuild from the recorded
+        // revision, removing only the builder identified as this deployment's.
+        if (builderContainer) {
+          await builderContainer.remove({ force: true });
+          builderContainer = undefined;
+        }
         builderContainer = await createBuilderContainer(
           deploymentId,
           (container) => {
@@ -702,212 +704,195 @@ export const createDeploymentExecutor = ({
           changes: [
             `WORKDIR ${rootDirectory}`,
             `CMD ${JSON.stringify(["sh", "-c", startCommand])}`,
+            "LABEL nmt.artifact=image",
           ],
         });
 
         committedImageId = committedImage.Id;
 
         console.log(`Application image created: ${imageName}`);
+      }
 
-        /*
-         * Get the containers currently serving this app.
-         *
-         * IMPORTANT:
-         * We do not stop them yet.
-         */
-        oldContainers = await getDeploymentContainers(
-          docker,
-          deployment.appId,
-          deploymentId,
-          appDomain,
-        );
+      /*
+       * Create the new deployment container FIRST.
+       */
+      await updateDeployment(
+        {
+          id: deploymentId,
+          status: "starting",
+        },
+        userId,
+      );
 
-        /*
-         * Create the new deployment container FIRST.
-         */
-        await updateDeployment(
-          {
-            id: deploymentId,
-            status: "starting",
+      await createDeploymentLogs({
+        deploymentId,
+        message: "Starting application...",
+        createdBy: userId,
+      });
+
+      console.log(`Starting application...`);
+
+      deploymentContainer = await docker.createContainer({
+        name: deploymentContainerName(deploymentId),
+
+        Image: imageName,
+
+        Labels: {
+          "traefik.enable": "true",
+
+          "nmt.app-id": String(deployment.appId),
+
+          "nmt.deployment-id": String(deploymentId),
+          "nmt.artifact": "runtime",
+
+          [`traefik.http.routers.deployment-${deploymentId}.rule`]: `Host(\`${appDomain}\`)`,
+
+          [`traefik.http.routers.deployment-${deploymentId}.entrypoints`]:
+            "web",
+
+          [`traefik.http.services.deployment-${deploymentId}.loadbalancer.server.port`]:
+            String(appPort),
+
+          "traefik.docker.network": "app-network",
+        },
+
+        ExposedPorts: {
+          [`${appPort}/tcp`]: {},
+        },
+
+        HostConfig: {
+          NetworkMode: "app-network",
+
+          RestartPolicy: {
+            Name: "unless-stopped",
           },
-          userId,
-        );
+        },
+      });
 
-        await createDeploymentLogs({
-          deploymentId,
-          message: "Starting application...",
-          createdBy: userId,
-        });
+      /*
+       * Start the new container before touching the old one.
+       */
+      try {
+        await deploymentContainer.start();
+      } catch (error) {
+        throw safeDiagnosticError(error, "Start application");
+      }
 
-        console.log(`Starting application...`);
+      deploymentContainerStarted = true;
+      onRuntimeStarted();
 
-        deploymentContainer = await docker.createContainer({
-          name: deploymentContainerName(deploymentId),
+      console.log(`Deployment container ${deploymentId} started.`);
 
-          Image: imageName,
+      /*
+       * Start acceptance is the success boundary. Persist the outcome and
+       * retire prior runtimes before releasing coordination for this app.
+       */
+      await finishRuntime(deploymentContainer);
 
-          Labels: {
-            "traefik.enable": "true",
-
-            "nmt.app-id": String(deployment.appId),
-
-            "nmt.deployment-id": String(deploymentId),
-
-            [`traefik.http.routers.deployment-${deploymentId}.rule`]: `Host(\`${appDomain}\`)`,
-
-            [`traefik.http.routers.deployment-${deploymentId}.entrypoints`]:
-              "web",
-
-            [`traefik.http.services.deployment-${deploymentId}.loadbalancer.server.port`]:
-              String(appPort),
-
-            "traefik.docker.network": "app-network",
-          },
-
-          ExposedPorts: {
-            [`${appPort}/tcp`]: {},
-          },
-
-          HostConfig: {
-            NetworkMode: "app-network",
-
-            RestartPolicy: {
-              Name: "unless-stopped",
-            },
-          },
-        });
-
-        /*
-         * Start the new container before touching the old one.
-         */
-        try {
-          await deploymentContainer.start();
-        } catch (error) {
-          throw safeDiagnosticError(error, "Start application");
-        }
-
-        deploymentContainerStarted = true;
-
-        console.log(`Deployment container ${deploymentId} started.`);
-
-        /*
-         * The application is now available to Traefik.
-         *
-         * Mark success immediately. Everything after this point
-         * is cleanup/background work.
-         */
-        await updateDeployment(
-          {
-            id: deploymentId,
-            status: "success",
-          },
-          userId,
-        );
-
-        await createDeploymentLogs({
-          deploymentId,
-          message: `${appName} deployed successfully at ${appDomain}.`,
-          createdBy: userId,
-        });
-
-        console.log(`${appName} deployed successfully at ${appDomain}.`);
-
-        /*
-         * Start background work.
-         *
-         * None of this blocks the deployment response/status.
-         */
-        void Promise.allSettled([
-          streamDeploymentLogs(
-            docker,
-            deploymentContainer,
+      /*
+       * deploy() can return now.
+       */
+      return;
+    } finally {
+      /*
+       * Before replacement start, release only this attempt's acquired handles.
+       * After start, retain recoverable artifacts even if persistence fails.
+       */
+      if (!deploymentContainerStarted) {
+        if (deploymentContainer) {
+          const container = deploymentContainer;
+          await cleanupFailedArtifact(
             deploymentId,
             userId,
-          ),
-
-          pushImage(docker, imageName, deploymentId),
-
-          cleanupDeployment({
-            docker,
-            builderContainer,
-            imageName,
-            oldContainers,
-            deploymentContainerStarted,
+            `runtime ${container.id}`,
+            () => container.remove({ force: true }),
+          );
+        }
+        if (builderContainer) {
+          const container = builderContainer;
+          await cleanupFailedArtifact(
             deploymentId,
-          }),
-        ]);
-
-        /*
-         * deploy() can return now.
-         */
-        return;
-      } finally {
-        /*
-         * Before replacement start, release only this attempt's acquired handles.
-         * After start, the established success path owns background cleanup.
-         */
-        if (!deploymentContainerStarted) {
-          if (deploymentContainer) {
-            const container = deploymentContainer;
-            await cleanupFailedArtifact(
-              deploymentId,
-              userId,
-              `runtime ${container.id}`,
-              () => container.remove({ force: true }),
-            );
-          }
-          if (builderContainer) {
-            const container = builderContainer;
-            await cleanupFailedArtifact(
-              deploymentId,
-              userId,
-              `builder ${container.id}`,
-              () => container.remove({ force: true }),
-            );
-          }
-          if (committedImageId) {
-            const image = docker.getImage(committedImageId);
-            await cleanupFailedArtifact(
-              deploymentId,
-              userId,
-              `image ${committedImageId}`,
-              () => image.remove(),
-            );
-          }
+            userId,
+            `builder ${container.id}`,
+            () => container.remove({ force: true }),
+          );
+        }
+        if (committedImageId) {
+          const image = docker.getImage(committedImageId);
+          await cleanupFailedArtifact(
+            deploymentId,
+            userId,
+            `image ${committedImageId}`,
+            () => image.remove(),
+          );
         }
       }
-    });
+    }
   };
 
   return async ({ userId, deploymentId }: DeploymentRequest): Promise<void> =>
     withDeploymentDiagnostics(async () => {
       registerDiagnosticSecrets(registry.password);
 
-      try {
-        await deploy(userId, deploymentId);
-      } catch (failure) {
-        const error = safeDiagnosticError(failure);
-        console.error(`Deployment ${deploymentId} failed:`, error);
+      const reportFailure = async (
+        failure: unknown,
+        runtimeStarted = false,
+      ): Promise<never> => {
+        const error = safeDiagnosticError(
+          failure,
+          runtimeStarted ? "Runtime started; recovery pending" : undefined,
+        );
+        console.error(
+          `Deployment ${deploymentId} attempt requires recovery:`,
+          error,
+        );
 
         try {
           await updateDeployment(
-            { id: deploymentId, status: "failed" },
+            { id: deploymentId, status: runtimeStarted ? "success" : "failed" },
             userId,
           );
+        } catch (statusError) {
+          console.error(
+            `Failed to save deployment ${deploymentId} outcome:`,
+            safeDiagnosticError(statusError),
+          );
+        }
+        // A rejected status write must not suppress an independently writable
+        // recovery diagnostic (and vice versa).
+        try {
           await createDeploymentLogs({
             deploymentId,
             message: error.message,
             createdBy: userId,
           });
-        } catch (statusError) {
+        } catch (logError) {
           console.error(
-            `Failed to update failed deployment ${deploymentId}:`,
-            safeDiagnosticError(statusError),
+            `Failed to save deployment ${deploymentId} diagnostic:`,
+            safeDiagnosticError(logError),
           );
         }
 
         // BullMQ owns delivery acknowledgement and retry/backoff.
         throw safeDiagnosticError(error);
+      };
+
+      let deployment: DeploymentSnapshot | undefined;
+      try {
+        deployment = await getDeployment(deploymentId);
+      } catch (failure) {
+        return reportFailure(failure);
       }
+      const attempt = async () => {
+        let runtimeStarted = false;
+        try {
+          await deploy(userId, deploymentId, deployment, () => {
+            runtimeStarted = true;
+          });
+        } catch (failure) {
+          return reportFailure(failure, runtimeStarted);
+        }
+      };
+      return deployment ? withAppLock(deployment.appId, attempt) : attempt();
     });
 };

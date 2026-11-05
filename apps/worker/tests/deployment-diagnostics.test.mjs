@@ -113,6 +113,12 @@ test(
         return {};
       },
       pull: (_image, callback) => callback(null, Readable.from([])),
+      listContainers: async () => [],
+      getImage: () => ({
+        inspect: async () => {
+          throw Object.assign(new Error("No such image"), { statusCode: 404 });
+        },
+      }),
       modem: { followProgress: (_stream, callback) => callback(null) },
       createContainer: async () => ({
         start: async () => {},
