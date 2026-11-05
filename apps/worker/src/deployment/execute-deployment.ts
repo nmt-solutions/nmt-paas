@@ -312,20 +312,31 @@ export const createDeploymentExecutor = ({
     const publication = await getPublication(deploymentId, userId);
     if (!publication) throw new Error("Publication not found");
     if (publication.status === "published") return;
+    let pushing = false;
     try {
       await updatePublication(
         deploymentId,
         { status: "publishing", lastError: null },
         userId,
       );
+      pushing = true;
       await publishImage(await getDocker(), publication, registry);
+      pushing = false;
       await updatePublication(
         deploymentId,
         { status: "published", lastError: null },
         userId,
       );
     } catch (failure) {
-      const error = safeDiagnosticError(failure, "Registry publication failed");
+      const diagnostic = safeDiagnosticError(
+        failure,
+        "Registry publication failed",
+      );
+      const error = pushing
+        ? diagnostic
+        : new Error(
+            "Registry publication outcome could not be saved. Retry publication to confirm the recorded image.",
+          );
       try {
         await updatePublication(
           deploymentId,
@@ -338,7 +349,7 @@ export const createDeploymentExecutor = ({
           safeDiagnosticError(persistenceError),
         );
       }
-      console.error(error);
+      console.error(diagnostic);
       throw error;
     }
   };

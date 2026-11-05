@@ -352,15 +352,19 @@ test(
     });
     const [failedJob, failure] = await failedRecovery;
     assert.equal(failedJob.id, recoveryJob.id);
-    assert.match(
+    assert.equal(
       failure.message,
-      /Registry publication failed: Failed query: update/,
+      "Registry publication outcome could not be saved. Retry publication to confirm the recorded image.",
     );
     assert.doesNotMatch(failure.message, /fixture-registry-token/);
     assert.equal((await owner.publication({ deploymentId })).status, "success");
     assert.equal(
       (await owner.publication({ deploymentId })).publication.status,
       "failed",
+    );
+    assert.equal(
+      (await owner.publication({ deploymentId })).publication.lastError,
+      "Registry publication outcome could not be saved. Retry publication to confirm the recorded image.",
     );
     const failedAt = Date.now();
     await fixtureDb.query(

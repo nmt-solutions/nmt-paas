@@ -37,7 +37,8 @@ does not print raw progress records. Registry passwords and Docker's encoded
 authentication header are redacted before errors are persisted or reported.
 
 If PostgreSQL rejects the result write, the worker attempts to save a separate
-publication failure. If both writes fail, the persisted `pending`/`publishing`
+publication failure. Storage errors use an actionable recovery message in the
+owner view; raw queries remain out of the status card. If both writes fail, the persisted `pending`/`publishing`
 state remains recoverable. A registry push may already have succeeded; replaying
 that same image safely confirms it again. Runtime status is unchanged.
 
