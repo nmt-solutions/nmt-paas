@@ -20,6 +20,12 @@ import { tryCatch } from "../utils/try-catch.js";
 import { getCloneUrl } from "../services/github.js";
 import env from "../env/vars.js";
 import { fetchEnvVars } from "../services/env-vars.js";
+import {
+  DiagnosticOutput,
+  redactDiagnostic,
+  safeDiagnosticError,
+  withDeploymentDiagnostics,
+} from "../services/diagnostics.js";
 
 type Docker = Awaited<ReturnType<typeof getDocker>>;
 
@@ -80,7 +86,7 @@ class DeploymentLogQueue {
   ) {}
 
   add(message: string): Promise<void> {
-    const value = message;
+    const value = redactDiagnostic(message);
 
     this.queue = this.queue
       .then(async () => {
@@ -97,7 +103,7 @@ class DeploymentLogQueue {
       .catch((error) => {
         console.error(
           `Failed to save deployment log for ${this.deploymentId}:`,
-          error,
+          safeDiagnosticError(error),
         );
       });
 
@@ -166,7 +172,10 @@ const removeContainers = async (
 
         console.log(`Removed old deployment container ${container.Id}`);
       } catch (error) {
-        console.error(`Failed to remove container ${container.Id}:`, error);
+        console.error(
+          `Failed to remove container ${container.Id}:`,
+          safeDiagnosticError(error),
+        );
       }
     }),
   );
@@ -186,7 +195,10 @@ const removeImage = async (
 
     console.log(message);
   } catch (error) {
-    console.error(`Failed to remove image ${imageName}:`, error);
+    console.error(
+      `Failed to remove image ${imageName}:`,
+      safeDiagnosticError(error),
+    );
   }
 };
 
@@ -212,8 +224,9 @@ const streamDeploymentLogs = async (
     const logQueue = new DeploymentLogQueue(deploymentId, userId);
 
     const consume = async (logStream: PassThrough) => {
+      const output = new DiagnosticOutput();
       logStream.on("data", (chunk: Buffer) => {
-        const log = chunk.toString("utf8");
+        const log = output.write(chunk);
 
         if (!log.trim()) {
           return;
@@ -223,11 +236,18 @@ const streamDeploymentLogs = async (
 
         void logQueue.add(log);
       });
+      logStream.on("end", () => {
+        const remaining = output.end();
+        if (remaining) {
+          process.stdout.write(remaining);
+          void logQueue.add(remaining);
+        }
+      });
 
       logStream.on("error", (error) => {
         console.error(
           `Deployment log stream error for ${deploymentId}:`,
-          error,
+          safeDiagnosticError(error),
         );
       });
     };
@@ -235,12 +255,15 @@ const streamDeploymentLogs = async (
     await Promise.all([consume(stdout), consume(stderr)]);
 
     stream.on("error", (error) => {
-      console.error(`Docker log stream error for ${deploymentId}:`, error);
+      console.error(
+        `Docker log stream error for ${deploymentId}:`,
+        safeDiagnosticError(error),
+      );
     });
   } catch (error) {
     console.error(
       `Failed to attach deployment logs for ${deploymentId}:`,
-      error,
+      safeDiagnosticError(error),
     );
   }
 };
@@ -303,7 +326,7 @@ const pushImage = async (
             }
 
             if (data.status?.includes("digest:")) {
-              console.log(`[GHCR] ${data.status}`);
+              console.log(redactDiagnostic(`[GHCR] ${data.status}`));
             }
           } catch {
             // Docker can send non-JSON output.
@@ -320,7 +343,7 @@ const pushImage = async (
   } catch (error) {
     console.error(
       `Failed to push image for deployment ${deploymentId}:`,
-      error,
+      safeDiagnosticError(error),
     );
   }
 };
@@ -352,7 +375,7 @@ const cleanupDeployment = async ({
   } catch (error) {
     console.error(
       `Failed to remove builder container for deployment ${deploymentId}:`,
-      error,
+      safeDiagnosticError(error),
     );
   }
 
@@ -444,11 +467,12 @@ const deploy = async (userId: string, deploymentId: number) => {
 
       const cloneUrl = await getCloneUrl(userId, appName);
 
-      await executeCommand(builderContainer, [
-        "sh",
-        "-c",
-        `git clone ${cloneUrl} .`,
-      ]);
+      await executeCommand(
+        builderContainer,
+        ["sh", "-c", `git clone ${cloneUrl} .`],
+        undefined,
+        "Clone repository",
+      );
 
       await createDeploymentLogs({
         deploymentId,
@@ -459,11 +483,12 @@ const deploy = async (userId: string, deploymentId: number) => {
       /*
        * Checkout exact deployment commit.
        */
-      await executeCommand(builderContainer, [
-        "sh",
-        "-c",
-        `git checkout --detach ${deployment.commit}`,
-      ]);
+      await executeCommand(
+        builderContainer,
+        ["sh", "-c", `git checkout --detach ${deployment.commit}`],
+        undefined,
+        "Checkout commit",
+      );
 
       await createDeploymentLogs({
         deploymentId,
@@ -499,6 +524,7 @@ const deploy = async (userId: string, deploymentId: number) => {
         builderContainer,
         ["sh", "-c", installCommand],
         rootDirectory,
+        "Install dependencies",
       );
 
       await createDeploymentLogs({
@@ -525,6 +551,7 @@ const deploy = async (userId: string, deploymentId: number) => {
           EOF`,
         ],
         rootDirectory,
+        "Configure environment",
       );
 
       /*
@@ -550,6 +577,7 @@ const deploy = async (userId: string, deploymentId: number) => {
         builderContainer,
         ["sh", "-c", buildCommand],
         rootDirectory,
+        "Build application",
       );
 
       await createDeploymentLogs({
@@ -711,7 +739,7 @@ const deploy = async (userId: string, deploymentId: number) => {
         } catch (cleanupError) {
           console.error(
             `Failed to remove failed deployment container ${deploymentId}:`,
-            cleanupError,
+            safeDiagnosticError(cleanupError),
           );
         }
       }
@@ -737,7 +765,7 @@ const deploy = async (userId: string, deploymentId: number) => {
         } catch (cleanupError) {
           console.error(
             `Failed to remove builder container for deployment ${deploymentId}:`,
-            cleanupError,
+            safeDiagnosticError(cleanupError),
           );
         }
       }
@@ -749,41 +777,45 @@ const worker = new Worker(
   "deployment-queue",
 
   async (job) => {
-    const { userId, deploymentId } = job.data as {
-      userId: string;
-      deploymentId: number;
-    };
+    return withDeploymentDiagnostics(async () => {
+      const { userId, deploymentId } = job.data as {
+        userId: string;
+        deploymentId: number;
+      };
 
-    const { error } = await tryCatch(deploy(userId, deploymentId));
+      const { error: failure } = await tryCatch(deploy(userId, deploymentId));
 
-    if (!error) {
-      return;
-    }
+      if (!failure) {
+        return;
+      }
 
-    console.error(`Deployment ${deploymentId} failed:`, error);
+      const error = safeDiagnosticError(failure);
 
-    try {
-      await updateDeployment(
-        {
-          id: deploymentId,
-          status: "failed",
-        },
-        userId,
-      );
+      console.error(`Deployment ${deploymentId} failed:`, error);
 
-      await createDeploymentLogs({
-        deploymentId,
-        message: error.message,
-        createdBy: userId,
-      });
-    } catch (statusError) {
-      console.error(
-        `Failed to update failed deployment ${deploymentId}:`,
-        statusError,
-      );
-    }
+      try {
+        await updateDeployment(
+          {
+            id: deploymentId,
+            status: "failed",
+          },
+          userId,
+        );
 
-    throw error;
+        await createDeploymentLogs({
+          deploymentId,
+          message: error.message,
+          createdBy: userId,
+        });
+      } catch (statusError) {
+        console.error(
+          `Failed to update failed deployment ${deploymentId}:`,
+          safeDiagnosticError(statusError),
+        );
+      }
+
+      throw safeDiagnosticError(error);
+    });
   },
 
   {
@@ -793,7 +825,7 @@ const worker = new Worker(
 );
 
 worker.on("error", (error) => {
-  console.error("Deployment worker error:", error);
+  console.error("Deployment worker error:", safeDiagnosticError(error));
 });
 
 console.log("Deployment worker started");

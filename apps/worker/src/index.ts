@@ -1,5 +1,6 @@
 import { redis } from "@repo/redis";
 import "./workers/deployment.worker.js";
+import { safeDiagnosticError } from "./services/diagnostics.js";
 
 const bootstrap = async () => {
   redis
@@ -10,7 +11,7 @@ const bootstrap = async () => {
       console.log("Deployment worker started");
     })
     .catch((err) => {
-      console.error(err);
+      console.error(safeDiagnosticError(err));
     });
 };
 

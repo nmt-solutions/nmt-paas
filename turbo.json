@@ -32,23 +32,49 @@
       ]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": ["^lint"],
+      "env": ["TEST_DATABASE_URL"]
     },
     "check-types": {
       "dependsOn": ["^check-types"]
+    },
+    "test": {
+      "cache": false,
+      "env": ["DATABASE_TEST_URL"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
     "db-gen": {
-      "cache": false
+      "cache": false,
+      "env": [
+        "APP_ENV",
+        "DB_ENV",
+        "DEV_DATABASE_URL",
+        "PROD_DATABASE_URL",
+        "BASE_DOMAIN"
+      ]
     },
     "db-mig": {
-      "cache": false
+      "cache": false,
+      "env": [
+        "APP_ENV",
+        "DB_ENV",
+        "DEV_DATABASE_URL",
+        "PROD_DATABASE_URL",
+        "BASE_DOMAIN"
+      ]
     },
     "db-studio": {
-      "cache": false
+      "cache": false,
+      "env": [
+        "APP_ENV",
+        "DB_ENV",
+        "DEV_DATABASE_URL",
+        "PROD_DATABASE_URL",
+        "BASE_DOMAIN"
+      ]
     }
   }
 }
