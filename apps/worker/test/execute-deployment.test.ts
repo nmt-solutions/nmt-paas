@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { setTimeout } from "node:timers/promises";
 import { createDeploymentExecutor } from "../src/deployment/execute-deployment.js";
 import {
   deploymentFixture,
@@ -51,6 +50,7 @@ test("a production deployment starts its image and replaces only its previous ru
   assert.deepEqual(fixture.images.get("ghcr.io/fixture/42:42")?.changes, [
     "WORKDIR /app",
     'CMD ["sh","-c","node dist/server.js"]',
+    "LABEL nmt.artifact=image",
   ]);
   const logText = (await fixture.database.getLogs(deploymentId))
     .map((log) => log.message)
@@ -66,12 +66,7 @@ test("a production deployment starts its image and replaces only its previous ru
     "Container started for fixture-app at fixture.invalid. Application readiness has not been checked.",
   );
 
-  // Cleanup is deliberately background work in the existing success policy.
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const containers = await fixture.docker.listContainers({ all: true });
-    if (containers.length === 2) break;
-    await setTimeout(10);
-  }
+  // Retirement completes before this app's coordination is released.
   assert.deepEqual(
     (await fixture.docker.listContainers({ all: true }))
       .map((container) => container.Id)
@@ -556,6 +551,351 @@ test("failed-image cleanup preserves another app's tag when Docker reports share
   assert.equal(
     (await fixture.database.getDeployment(deploymentId))?.status,
     "failed",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
+
+test("a runtime survives unavailable post-start persistence and a fresh executor reconciles it without rebuilding", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  let unavailable = false;
+  const storage = fixture.database;
+  const dependencies = {
+    ...fixture.dependencies,
+    updateDeployment: async (params: { id: number; status: string }) => {
+      if (params.status === "success") unavailable = true;
+      if (unavailable)
+        throw new Error("fixture persistence unavailable fixture-pat");
+      await storage.updateDeployment(params);
+    },
+    createDeploymentLogs: async (
+      log: Parameters<typeof storage.createDeploymentLogs>[0],
+    ) => {
+      if (unavailable)
+        throw new Error("fixture persistence unavailable fixture-pat");
+      await storage.createDeploymentLogs(log);
+    },
+  };
+
+  await assert.rejects(
+    createDeploymentExecutor(dependencies)({ userId, deploymentId }),
+    /Runtime started; recovery pending: fixture persistence unavailable \[REDACTED\]/,
+  );
+  assert.equal((await storage.getDeployment(deploymentId))?.status, "starting");
+  const runtime = await fixture.docker.getContainer("deployment-42").inspect();
+  assert.equal(runtime.State.Running, true);
+  assert.equal(runtime.Config.Labels["nmt.deployment-id"], "42");
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+
+  // Simulate worker restart and restored persistence, with repository access gone.
+  await createDeploymentExecutor({
+    ...fixture.dependencies,
+    getCloneUrl: async () => {
+      throw new Error("Repository temporarily unavailable");
+    },
+  })({ userId, deploymentId });
+
+  assert.equal((await storage.getDeployment(deploymentId))?.status, "success");
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["deployment-42", "unrelated"],
+  );
+});
+
+test("retry discards an identified partial builder instead of colliding with its name", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  await fixture.docker.createContainer({
+    name: "builder-42",
+    Image: "node:22-alpine",
+    Labels: { "nmt.deployment-id": "42", "nmt.artifact": "builder" },
+  });
+
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["deployment-42", "unrelated"],
+  );
+});
+
+test("incomplete prior-runtime retirement is visible and retryable without failing or rebuilding the started runtime", async (t) => {
+  const failRemove = {
+    previous: "previous runtime removal denied fixture-pat",
+  };
+  const fixture = await deploymentFixture({ failRemove });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Runtime started; recovery pending: Artifact cleanup incomplete/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("deployment-42").inspect()).State
+      .Running,
+    true,
+  );
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(
+    logs,
+    /Cleanup failed for prior runtime previous: .*removal denied \[REDACTED\]/,
+  );
+  assert.doesNotMatch(logs, /fixture-pat/);
+
+  Reflect.deleteProperty(failRemove, "previous");
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["deployment-42", "unrelated"],
+  );
+});
+
+test(
+  "same-app replacement waits for retirement while another app proceeds and a failed waiter releases coordination",
+  { timeout: 10_000 },
+  async (t) => {
+    let notifyRetiring!: () => void;
+    let releaseRetirement!: () => void;
+    const retiring = new Promise<void>((resolve) => {
+      notifyRetiring = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseRetirement = resolve;
+    });
+    const fixture = await deploymentFixture({
+      beforeRemove: async (id) => {
+        if (id === "previous") {
+          notifyRetiring();
+          await release;
+        }
+      },
+    });
+    t.after(fixture.close);
+    t.after(() => releaseRetirement());
+    await fixture.database.createDeployment(43);
+    await fixture.database.createDeployment(44, 9);
+    await fixture.database.createDeployment(45);
+    const dependencies = {
+      ...fixture.dependencies,
+      getCloneUrl: async (owner: string, repoId: number) => {
+        if (owner === "failing-owner")
+          throw new Error("fixture repository unavailable");
+        return fixture.dependencies.getCloneUrl(owner, repoId);
+      },
+    };
+    const execute = createDeploymentExecutor(dependencies);
+    const first = execute({ userId, deploymentId });
+    await retiring;
+    assert.equal(
+      (await fixture.docker.getContainer("deployment-42").inspect()).State
+        .Running,
+      true,
+    );
+    const failedWaiter = assert.rejects(
+      execute({ userId: "failing-owner", deploymentId: 43 }),
+      /fixture repository unavailable/,
+    );
+    const last = execute({ userId, deploymentId: 45 });
+
+    await execute({ userId, deploymentId: 44 });
+    assert.equal((await fixture.database.getDeployment(43))?.status, "queued");
+    assert.equal((await fixture.database.getDeployment(45))?.status, "queued");
+    assert.equal((await fixture.database.getDeployment(44))?.status, "success");
+    await assert.rejects(fixture.docker.getContainer("builder-43").inspect(), {
+      statusCode: 404,
+    });
+
+    releaseRetirement();
+    await Promise.all([first, failedWaiter, last]);
+    assert.equal((await fixture.database.getDeployment(43))?.status, "failed");
+    assert.equal((await fixture.database.getDeployment(45))?.status, "success");
+    assert.deepEqual(
+      (await fixture.docker.listContainers({ all: true }))
+        .map((container) => container.Id)
+        .sort(),
+      ["deployment-44", "deployment-45", "unrelated"],
+    );
+  },
+);
+
+test("repeated successful delivery adopts the running runtime and a created owned runtime starts without rebuilding", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  const runtime = await fixture.docker.createContainer({
+    name: "deployment-42",
+    Image: "ghcr.io/fixture/42:42",
+    Labels: { "nmt.app-id": "7", "nmt.deployment-id": "42" },
+  });
+  const execute = createDeploymentExecutor({
+    ...fixture.dependencies,
+    getCloneUrl: async () => {
+      throw new Error("Repository temporarily unavailable");
+    },
+  });
+  await Promise.all([
+    execute({ userId, deploymentId }),
+    execute({ userId, deploymentId }),
+  ]);
+  assert.equal((await runtime.inspect()).State.Running, true);
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["deployment-42", "unrelated"],
+  );
+});
+
+test("an existing runtime with a foreign deployment identity is preserved", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  const runtime = await fixture.docker.createContainer({
+    name: "deployment-42",
+    Image: "foreign-image",
+    Labels: { "nmt.app-id": "8", "nmt.deployment-id": "42" },
+  });
+  await runtime.start();
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /unidentified deployment/,
+  );
+  assert.equal((await runtime.inspect()).Config.Image, "foreign-image");
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
+
+test("a delivery resumes its committed image when the worker stopped before runtime creation", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  const builder = await fixture.docker.createContainer({
+    name: "builder-42",
+    Image: "node:22-alpine",
+    Labels: { "nmt.deployment-id": "42", "nmt.artifact": "builder" },
+  });
+  await builder.commit({
+    repo: "ghcr.io/fixture/42",
+    tag: "42",
+    changes: ["WORKDIR /app", "LABEL nmt.artifact=image"],
+  });
+  await builder.remove({ force: true });
+
+  await createDeploymentExecutor({
+    ...fixture.dependencies,
+    getCloneUrl: async () => {
+      throw new Error("Repository temporarily unavailable");
+    },
+  })({ userId, deploymentId });
+  assert.equal(
+    (await fixture.docker.getContainer("deployment-42").inspect()).State
+      .Running,
+    true,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+});
+
+test("retirement preserves an explicitly different app even when its routing rule overlaps", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  await fixture.docker.createContainer({
+    name: "foreign-route",
+    Image: "unrelated-image",
+    Labels: {
+      "nmt.app-id": "8",
+      "traefik.http.routers.deployment-99.rule": "Host(`fixture.invalid`)",
+    },
+  });
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+  assert.equal(
+    (await fixture.docker.getContainer("foreign-route").inspect()).Config.Image,
+    "unrelated-image",
+  );
+});
+
+test("an unavailable inspection preserves the identified running runtime for retry", async (t) => {
+  const failInspect = {
+    "deployment-42": "fixture inspection unavailable fixture-pat",
+  };
+  const fixture = await deploymentFixture({ failInspect });
+  t.after(fixture.close);
+  const runtime = await fixture.docker.createContainer({
+    name: "deployment-42",
+    Image: "ghcr.io/fixture/42:42",
+    Labels: { "nmt.app-id": "7", "nmt.deployment-id": "42" },
+  });
+  await runtime.start();
+  const execute = createDeploymentExecutor(fixture.dependencies);
+  await assert.rejects(
+    execute({ userId, deploymentId }),
+    /fixture inspection unavailable \[REDACTED\]/,
+  );
+  assert.equal(
+    (await fixture.docker.listContainers({ all: true })).find(
+      (container) => container.Id === runtime.id,
+    )?.State,
+    "running",
+  );
+  Reflect.deleteProperty(failInspect, "deployment-42");
+  await execute({ userId, deploymentId });
+  assert.equal((await runtime.inspect()).State.Running, true);
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+});
+
+test("an image tag without this deployment's identity is preserved", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  fixture.images.set("ghcr.io/fixture/42:42", {
+    id: "foreign-image",
+    changes: [],
+  });
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Image name belongs to an unidentified deployment/,
+  );
+  assert.equal(
+    (await fixture.docker.getImage("ghcr.io/fixture/42:42").inspect()).Id,
+    "foreign-image",
   );
   assert.equal(
     (await fixture.docker.getContainer("previous").inspect()).State.Running,

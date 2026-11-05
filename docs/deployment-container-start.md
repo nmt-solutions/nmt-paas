@@ -30,9 +30,10 @@ compatible with existing records and clients.
 To investigate an attempt, open its app, select the deployment in history, and
 inspect the deployment and application output. Check the application's endpoint
 separately to establish whether it serves the expected response. Registry image
-publication and old-artifact cleanup still run in the background; the start
-result does not establish their completion. Their recovery is separate lifecycle
-work.
+publication still runs in the background. Replacement retirement now finishes
+inside per-app coordination; failed persistence or cleanup rejects the delivery
+for retry while preserving the accepted start. The start result alone does not
+establish retirement completion. See [deployment retry recovery](deployment-retry-recovery.md).
 
 ## Local verification
 

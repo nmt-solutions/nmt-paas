@@ -17,13 +17,14 @@ log storage. Tests inject fixture adapters at these external boundaries.
 ## Outcome and delivery contract
 
 - A resolved execution means Docker accepted the new runtime's start and the
-  deployment success state/log were saved. It does not establish application
+  deployment success state/log were saved and replacement retirement finished.
+  It does not establish application
   readiness or a zero-downtime guarantee.
 - Execution preserves clone, recorded-commit checkout, install, environment-file
   creation, build, image commit, and runtime start behavior. It retains the
   process-local serialization of deployments for the same app. All callers of
   that process must share the executor instance.
-- On failure, execution attempts to persist `failed` and its scrubbed diagnostic,
+- Before runtime start, failure attempts to persist `failed` and its scrubbed diagnostic,
   then rejects with a sanitized error. Failure-reporting errors do not hide that
   diagnostic. Original stacks, causes, requests and command properties are
   discarded. A failed build removes its temporary builder and leaves the previous
@@ -33,14 +34,16 @@ log storage. Tests inject fixture adapters at these external boundaries.
   on resolution and failure/retry handling on rejection. Queue name, payload,
   concurrency (five), three attempts, exponential backoff starting at two
   seconds, and completed/failed retention remain unchanged.
-- Runtime log capture, registry publication, builder removal, and removal of
-  previous runtimes remain background work after success. Their completion is
-  not implied by the resolved promise. Previous runtimes are removed only after
-  replacement start.
+- Runtime log capture and registry publication remain background work after
+  success. Builder removal and prior-runtime retirement are awaited inside app
+  coordination, after replacement start. Post-start persistence or cleanup
+  failures retain the started replacement, report recovery pending, and reject
+  to BullMQ for reconciliation without changing a verified start to `failed`.
 
-This ticket extracts the existing behavior. It does not add durable retry
-reconciliation, recovery after persistence failure following runtime start,
-separate persisted publication/cleanup outcomes, or credential-file hardening.
+The [retry recovery increment](deployment-retry-recovery.md) reconciles identified
+artifacts on repeated deliveries and after post-start persistence failure.
+Separate persisted publication/cleanup outcomes and credential-file hardening
+remain later work.
 Builder preparation now registers acquired containers inside execution's failure
 cleanup scope; failed attempts also release their committed image and save
 independent cleanup diagnostics. See [failed deployment cleanup](failed-deployment-cleanup.md)

@@ -40,15 +40,15 @@ inspect by ID. An authorized operator can inspect that specific container or ima
 and retry its removal after resolving the Docker error. Confirm the identified
 artifact belongs to this failed attempt before removal; image references may
 belong to a running container. There is no host-wide cleanup in this workflow.
-This increment does not add a durable cleanup-retry action or automatic recovery
-after worker termination. Those remain the separate reconciliation and cleanup
-recovery tickets. Lost Docker acknowledgements and persistence failure immediately
-after a successful runtime start also remain later recovery work.
+Same-deployment reconciliation, including recovery after post-start persistence
+failure or worker restart, is described in
+[deployment retry recovery](deployment-retry-recovery.md). It does not add a
+durable cleanup ledger or host-wide cleanup action.
 
 If persistence is unavailable, failed-status or diagnostic writes can fail; their
 scrubbed errors go to worker output without replacing the original rejection.
-Successful starts retain the established background publication and cleanup
-behavior; this change concerns attempts that did not start.
+Successful starts retain background publication; replacement retirement is now
+awaited inside per-app coordination and can be retried through the same delivery.
 
 ## Verification
 
