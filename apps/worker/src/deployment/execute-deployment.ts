@@ -58,7 +58,7 @@ export type DeploymentExecutionDependencies = {
     workingDirectory?: string,
     stage?: string,
   ) => Promise<void>;
-  getCloneUrl: (userId: string, repository: string) => Promise<string>;
+  getCloneUrl: (userId: string, repositoryId: number) => Promise<string>;
   fetchEnvVars: (
     projectId: number,
     env: "production" | "preview",
@@ -519,7 +519,7 @@ export const createDeploymentExecutor = ({
 
         console.log(`Cloning repository for ${appName}...`);
 
-        const cloneUrl = await getCloneUrl(userId, appName);
+        const cloneUrl = await getCloneUrl(userId, deployment.repoId);
 
         await executeCommand(
           builderContainer,
@@ -650,7 +650,7 @@ export const createDeploymentExecutor = ({
           repo: `ghcr.io/${githubUserName}/${deploymentId}`,
           tag: deploymentId.toString(),
           changes: [
-            "WORKDIR /app",
+            `WORKDIR ${rootDirectory}`,
             `CMD ${JSON.stringify(["sh", "-c", startCommand])}`,
           ],
         });

@@ -75,8 +75,14 @@ test(
         App: class {
           async getInstallationOctokit() {
             return {
-              request: async () => ({
-                data: { account: { login: "fixture-owner" } },
+              request: async (route) => ({
+                data:
+                  route === "GET /repositories/{repository_id}"
+                    ? {
+                        clone_url:
+                          "https://github.com/fixture-owner/fixture-app.git",
+                      }
+                    : { account: { login: "fixture-owner" } },
               }),
               auth: async () => ({ token: "fixture-clone-token" }),
             };

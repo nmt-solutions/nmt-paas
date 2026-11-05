@@ -42,8 +42,8 @@ This ticket extracts the existing behavior. It does not add durable retry
 reconciliation, recovery after persistence failure following runtime start,
 separate persisted publication/cleanup outcomes, or credential-file hardening.
 Builder preparation still precedes the existing cleanup scope; failures during
-that preparation require the later artifact-ownership work. Existing startup
-working-directory and repository-name lookup behavior is also preserved.
+that preparation require the later artifact-ownership work. Ticket #10 adds
+[stable repository lookup and consistent startup working directories](deployment-repository-context.md).
 
 ## Checks and operational use
 

@@ -25,11 +25,15 @@ export async function getUserGithubAppInstallationId(userId: string) {
   }
 
   if (!appInstall) {
-    throw new Error("App Installation Not Found");
+    throw new Error(
+      "GitHub installation not found. Connect the GitHub App and grant repository access.",
+    );
   }
 
   if (!appInstall.installationId) {
-    throw new Error("App Installation Id Not Found");
+    throw new Error(
+      "GitHub installation not found. Connect the GitHub App and grant repository access.",
+    );
   }
 
   return appInstall.installationId;
@@ -43,7 +47,9 @@ export const getUserOctokitToken = async (userId: string) => {
   );
 
   if (error) {
-    throw new Error("Invalid installationId");
+    throw new Error(
+      "GitHub installation unavailable. Reconnect the GitHub App and check repository access.",
+    );
   }
 
   const { data: installation, error: installationError } = await tryCatch(
@@ -53,7 +59,9 @@ export const getUserOctokitToken = async (userId: string) => {
   );
 
   if (installationError) {
-    throw new Error("Installation not found.");
+    throw new Error(
+      "GitHub installation unavailable. Reconnect the GitHub App and check repository access.",
+    );
   }
 
   const { token } = (await octokit.auth({
@@ -63,14 +71,27 @@ export const getUserOctokitToken = async (userId: string) => {
   return {
     token,
     owner: (installation.data.account as { login: string }).login,
+    octokit,
   };
 };
 
-export const getCloneUrl = async (userId: string, repo: string) => {
-  const { token: octokitToken, owner } = await getUserOctokitToken(userId);
+export const getCloneUrl = async (userId: string, repositoryId: number) => {
+  const { token: octokitToken, octokit } = await getUserOctokitToken(userId);
   registerDiagnosticSecrets(octokitToken);
 
-  const cloneUrl = `https://x-access-token:${octokitToken}@github.com/${owner}/${repo}.git`;
+  const { data: repository, error } = await tryCatch(
+    octokit.request("GET /repositories/{repository_id}", {
+      repository_id: repositoryId,
+    }),
+  );
+  if (error || !repository.data.clone_url) {
+    throw new Error(
+      `Unable to access GitHub repository ${repositoryId} with the connected installation. Check repository access.`,
+    );
+  }
+  const cloneUrl = new URL(repository.data.clone_url);
+  cloneUrl.username = "x-access-token";
+  cloneUrl.password = octokitToken;
 
-  return cloneUrl;
+  return cloneUrl.href;
 };
