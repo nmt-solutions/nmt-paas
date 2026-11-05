@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "baseUrl": "../../..",
+    "paths": {
+      "@repo/database": ["packages/database/src/index.ts"],
+      "@repo/database/access-layer/*": [
+        "packages/database/src/access-layer/*.ts"
+      ]
+    }
+  }
+}

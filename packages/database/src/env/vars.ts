@@ -2,19 +2,35 @@
 import z from "zod";
 import "dotenv/config";
 
+const databaseUrl = (name: string) =>
+  z
+    .string({ error: `${name} is required.` })
+    .nonempty({ error: `${name} is required.` })
+    .nonoptional({ error: `${name} is required.` })
+    .refine(
+      (value) => {
+        try {
+          const url = new URL(value);
+          return (
+            ["postgres:", "postgresql:"].includes(url.protocol) &&
+            url.hostname.length > 0
+          );
+        } catch {
+          return false;
+        }
+      },
+      {
+        error: `${name} must be a PostgreSQL connection URL with a host.`,
+      },
+    );
+
 const EnvVarsSchema = z.object({
   APP_ENV: z.enum(["development", "production"]).default("development"),
   DB_ENV: z.enum(["development", "production"]).default("development"),
-  DEV_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "DEV_DATABASE_URL is required." })
-    .nonoptional({ error: "DEV_DATABASE_URL is required." }),
-  PROD_DATABASE_URL: z
-    .string()
-    .nonempty({ error: "PROD_DATABASE_URL is required." })
-    .nonoptional({ error: "PROD_DATABASE_URL is required." }),
+  DEV_DATABASE_URL: databaseUrl("DEV_DATABASE_URL"),
+  PROD_DATABASE_URL: databaseUrl("PROD_DATABASE_URL"),
   BASE_DOMAIN: z
-    .string()
+    .string({ error: "BASE_DOMAIN is required." })
     .nonempty({ error: "BASE_DOMAIN is required." })
     .nonoptional({ error: "BASE_DOMAIN is required." }),
 });
@@ -40,7 +56,13 @@ if (!success) {
   );
 }
 
-const env = { variables };
+const env = {
+  variables,
+  databaseUrl:
+    variables.DB_ENV === "production"
+      ? variables.PROD_DATABASE_URL
+      : variables.DEV_DATABASE_URL,
+};
 
 export default env;
 
