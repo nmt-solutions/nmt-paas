@@ -39,15 +39,17 @@ experimental module-mocking flag for external WorkOS and PostgreSQL fixtures;
 the route, database lookup, SDK, Express endpoint, Dockerode, and both HTTP hops
 execute production code. No production credentials or database are needed.
 
-On Linux, run the Go suite from `apps/node-manager` with the declared Go 1.27.1
-toolchain:
+Run the native Go suite from `apps/node-manager` with the declared Go 1.27.1
+toolchain on a host that permits execution of the generated test binary:
 
 ```sh
 go test -count=1 -timeout=20s ./...
-go test -race -count=1 -timeout=30s ./...
 go vet ./...
 go build ./...
 ```
+
+Where the toolchain supports the race detector and its native compiler is
+available, also run `go test -race -count=1 -timeout=30s ./...`.
 
 The HTTP suites cover EOF, cancellation while Docker opens, repeated active
 subscriptions, preserved log output/heartbeats, and interrupted Docker streams.
@@ -57,7 +59,11 @@ mock clock. The complete web-to-Express-to-Docker-fixture test uses real timers
 and exits without remaining subscription intervals.
 
 These are transport integration checks with fake Docker HTTP responses, not a
-real Docker-daemon smoke test or a PostgreSQL compatibility test. The existing
-Go host-memory implementation uses Linux syscalls, so the full package does not
-natively build on Windows. Windows-only test overlays must be reported as such;
-cross-compiling the unmodified Linux target is a separate build check.
+real Docker-daemon smoke test or a PostgreSQL compatibility test. Host-memory
+reporting now uses platform-specific files: Linux keeps its syscall measurements
+and other platforms return zero measurements. Ordinary native Windows tests no
+longer require the earlier host-memory overlay. Historical run notes retain the
+overlay evidence from before this portability change. Cross-compiling the Linux
+target is a separate build check; it does not execute the suite. If application
+control blocks a generated executable, report that check as blocked and run the
+suite on an allowed host without changing or bypassing the host policy.

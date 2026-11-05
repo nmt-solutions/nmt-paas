@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -140,9 +139,16 @@ func requireAPIAuth(key string) gin.HandlerFunc {
 func queueDeployment(cfg config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var raw json.RawMessage
-		if json.NewDecoder(c.Request.Body).Decode(&raw) != nil {
-			// express.json rejects malformed JSON before this handler. Valid JSON
-			// which is not an object reaches Zod and produces a form error.
+		decoder := json.NewDecoder(c.Request.Body)
+		if err := decoder.Decode(&raw); err != nil {
+			if err != io.EOF {
+				validationError(c, []string{"Invalid input: expected object, received invalid"}, nil)
+				return
+			}
+			raw = json.RawMessage(`{}`)
+		}
+		var trailing any
+		if decoder.Decode(&trailing) != io.EOF {
 			validationError(c, []string{"Invalid input: expected object, received invalid"}, nil)
 			return
 		}
@@ -157,7 +163,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 		userRaw, hasUserID := body["userId"]
 		if !hasUserID {
 			fields["userId"] = []string{"Invalid input: expected string, received undefined"}
-		} else if err := json.Unmarshal(userRaw, &userID); err != nil {
+		} else if jsonType(userRaw) != "string" || json.Unmarshal(userRaw, &userID) != nil {
 			fields["userId"] = []string{"Invalid input: expected string, received " + jsonType(userRaw)}
 		} else if userID == "" {
 			fields["userId"] = []string{"User id is required."}
@@ -165,7 +171,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 
 		var deploymentID float64
 		deploymentRaw, hasDeploymentID := body["deploymentId"]
-		if !hasDeploymentID || json.Unmarshal(deploymentRaw, &deploymentID) != nil || math.IsNaN(deploymentID) || math.IsInf(deploymentID, 0) {
+		if !hasDeploymentID || jsonType(deploymentRaw) != "number" || json.Unmarshal(deploymentRaw, &deploymentID) != nil || math.IsNaN(deploymentID) || math.IsInf(deploymentID, 0) {
 			fields["deploymentId"] = []string{"Deployment id must be a number."}
 		} else if deploymentID < 0 {
 			fields["deploymentId"] = []string{"Deployment id must be a +ve int."}
@@ -176,7 +182,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 		}
 		data, _ := json.Marshal(queuePayload{UserID: userID, DeploymentID: deploymentID})
 		if err := addBullMQJob(c.Request.Context(), cfg, string(data)); err != nil {
-			c.JSON(500, response(500, 500, err.Error(), nil, nil))
+			c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
 			return
 		}
 		c.JSON(201, response(201, 201, "Deployment Queued", true, nil))
@@ -214,11 +220,19 @@ func validationError(c *gin.Context, formErrors []string, fields map[string][]st
 
 // This writes BullMQ's Queue.add job representation so apps/worker can consume it unchanged.
 func addBullMQJob(ctx context.Context, cfg config, data string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(cfg.redisHost, cfg.redisPort))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	reader := bufio.NewReader(conn)
 	if err := writeRedisCommand(conn, "AUTH", cfg.redisPassword); err != nil {
 		return err
@@ -343,13 +357,6 @@ func adminHost(c *gin.Context) {
 	}
 	total, free := hostMemory()
 	c.JSON(200, response(200, 200, "Host status", gin.H{"health": "healthy", "cpuCount": runtime.NumCPU(), "memory": gin.H{"total": total, "used": total - free}, "docker": gin.H{"containers": len(containerList), "runningContainers": running, "images": len(imageList), "volumes": volumeCount, "disk": usage}, "info": info}, nil))
-}
-func hostMemory() (uint64, uint64) {
-	var info syscall.Sysinfo_t
-	if syscall.Sysinfo(&info) == nil {
-		return info.Totalram * uint64(info.Unit), info.Freeram * uint64(info.Unit)
-	}
-	return 0, 0
 }
 func dockerResources(c *gin.Context) {
 	resource := c.Param("resource")
