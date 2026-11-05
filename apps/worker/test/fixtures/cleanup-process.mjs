@@ -7,9 +7,9 @@ import { mock } from "node:test";
 mock.module("dockerode", {
   defaultExport: class extends Docker {
     constructor() {
-      // eslint-disable-next-line turbo/no-undeclared-env-vars
       super({
         host: "127.0.0.1",
+        // eslint-disable-next-line turbo/no-undeclared-env-vars
         port: Number(process.env.CLEANUP_TEST_DOCKER_PORT),
       });
     }
