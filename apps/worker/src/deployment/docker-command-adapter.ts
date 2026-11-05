@@ -15,42 +15,49 @@ export const createDockerCommandAdapter = ({
 >) => {
   async function createBuilderContainer(
     deploymentId: number,
+    onAcquired: (container: Docker.Container) => void = () => {},
   ): Promise<Docker.Container> {
-    // Create container from base image
+    try {
+      // Create container from base image
 
-    const docker = await getDocker();
+      const docker = await getDocker();
 
-    await new Promise((resolve, reject) => {
-      docker.pull(
-        "node:22-alpine",
-        (err: object, stream: NodeJS.ReadableStream) => {
-          if (err) return reject(err);
+      await new Promise((resolve, reject) => {
+        docker.pull(
+          "node:22-alpine",
+          (err: object, stream: NodeJS.ReadableStream) => {
+            if (err) return reject(err);
 
-          docker.modem.followProgress(stream, (err) =>
-            err ? reject(err) : resolve(undefined),
-          );
-        },
+            docker.modem.followProgress(stream, (err) =>
+              err ? reject(err) : resolve(undefined),
+            );
+          },
+        );
+      });
+
+      const container = await docker.createContainer({
+        Image: "node:22-alpine",
+        Cmd: ["tail", "-f", "/dev/null"],
+        Tty: true,
+        WorkingDir: "/app",
+        name: `builder-${deploymentId}`,
+      });
+
+      onAcquired(container);
+
+      await container.start();
+
+      await executeCommand(
+        container,
+        ["sh", "-c", "apk add --no-cache git docker-cli bash"],
+        undefined,
+        "Prepare builder",
       );
-    });
 
-    const container = await docker.createContainer({
-      Image: "node:22-alpine",
-      Cmd: ["tail", "-f", "/dev/null"],
-      Tty: true,
-      WorkingDir: "/app",
-      name: `builder-${deploymentId}`,
-    });
-
-    await container.start();
-
-    await executeCommand(
-      container,
-      ["sh", "-c", "apk add --no-cache git docker-cli bash"],
-      undefined,
-      "Prepare builder",
-    );
-
-    return container;
+      return container;
+    } catch (error) {
+      throw safeDiagnosticError(error, "Prepare builder");
+    }
   }
 
   async function executeCommand(
