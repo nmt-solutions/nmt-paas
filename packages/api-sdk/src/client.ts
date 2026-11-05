@@ -101,6 +101,18 @@ export class ControlPanelAPIClient {
     });
   }
 
+  async retireApp(appId: number, deploymentIds: number[]): Promise<boolean> {
+    const response = await axios.post<APIResponse<{ complete: boolean }>>(
+      `${this.baseUrl}/apps/${appId}/retire`,
+      { deploymentIds },
+      { headers: this.getHeaders(), timeout: 15_000 },
+    );
+    return (
+      response.data.status === "success" &&
+      response.data.data?.complete === true
+    );
+  }
+
   async getAdminHost(): Promise<AdminHostResponse> {
     const response = await axios.get(`${this.baseUrl}/admin/host`, {
       headers: this.getHeaders(),

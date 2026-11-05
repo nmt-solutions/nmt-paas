@@ -46,6 +46,10 @@ type DeploymentSnapshot = {
 };
 
 export type DeploymentExecutionDependencies = {
+  withAppLifecycleLock?: <T>(
+    appId: number,
+    operation: () => Promise<T>,
+  ) => Promise<T>;
   getDeployment: (
     id: number,
     userId: string,
@@ -93,6 +97,7 @@ type DeploymentContainer = {
  * readiness check. Replacement retirement is awaited; publication is background.
  */
 export const createDeploymentExecutor = ({
+  withAppLifecycleLock = async (_appId, operation) => operation(),
   getDeployment,
   updateDeployment,
   createDeploymentLogs,
@@ -924,6 +929,8 @@ export const createDeploymentExecutor = ({
           return reportFailure(failure, runtimeStarted);
         }
       };
-      return withAppLock(deployment.appId, attempt);
+      return withAppLock(deployment.appId, () =>
+        withAppLifecycleLock(deployment!.appId, attempt),
+      );
     });
 };

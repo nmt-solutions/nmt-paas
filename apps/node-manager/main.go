@@ -60,6 +60,7 @@ func main() {
 	authenticated := router.Group("/api/v1")
 	authenticated.Use(requireAPIAuth(cfg.apiKey))
 	authenticated.POST("/deployments/queue", queueDeployment(cfg))
+	authenticated.POST("/apps/:appId/retire", appRetirementHandler(dockerHTTPClient()))
 	authenticated.GET("/admin/host", adminHost)
 	authenticated.GET("/admin/docker/:resource", dockerResources)
 	authenticated.DELETE("/admin/docker/:resource/:id", deleteDockerResource)

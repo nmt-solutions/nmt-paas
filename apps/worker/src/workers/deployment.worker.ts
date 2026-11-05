@@ -4,6 +4,8 @@ import {
   type DeploymentRequest,
 } from "../deployment/execute-deployment.js";
 
+import { withAppLifecycleLock } from "@repo/database/access-layer/app-retirement.dal";
+
 import { redis } from "@repo/redis";
 
 import {
@@ -25,6 +27,7 @@ import { fetchEnvVars } from "../services/env-vars.js";
 import { safeDiagnosticError } from "../services/diagnostics.js";
 
 const executeDeployment = createDeploymentExecutor({
+  withAppLifecycleLock,
   getDeployment,
   updateDeployment,
   createDeploymentLogs,

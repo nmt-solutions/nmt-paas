@@ -1,4 +1,3 @@
-import cpApiClient from "@/services/cp-api-client";
 import { saveEnvVars } from "@/services/env-vars";
 import {
   getAppLatestDeployment,
@@ -13,7 +12,7 @@ import { updateFrameworkConfig } from "@repo/database/access-layer/framework-con
 import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { deleteProject } from "@repo/database/access-layer/project.dal";
+import { retireApp, retirementStatus } from "@/services/apps";
 import { redeployApp } from "@/services/projects";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
@@ -24,7 +23,8 @@ const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
       reject(
         new TRPCError({
           code: "TIMEOUT",
-          message: "The deployment service did not respond in time. Please try again.",
+          message:
+            "The deployment service did not respond in time. Please try again.",
         }),
       );
     }, milliseconds);
@@ -114,34 +114,20 @@ export const appRouter = createTRPCRouter({
   delete: authenticatedProcedure
     .input(appIdInput)
     .mutation(async ({ ctx, input }) => {
-      const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const activeDeployment = [...app.deployments]
-        .filter((deployment) => deployment.status === "success")
-        .sort((a, b) => b.id - a.id)[0];
-      if (activeDeployment) {
-        try {
-          await cpApiClient.deleteDockerResource(
-            "containers",
-            `deployment-${activeDeployment.id}`,
-          );
-        } catch (error) {
-          console.warn(
-            "Unable to remove the app container during deletion",
-            error,
-          );
-        }
-      }
-      await updateApp(input.appId, ctx.userInfo.user.id, {
-        resourceStatus: "inactive",
-      });
-      await deleteProject(app.projectId, ctx.userInfo.user.id);
-      return { success: true };
+      return retireApp(input.appId, ctx.userInfo.user.id);
     }),
+  retirementStatus: authenticatedProcedure
+    .input(appIdInput)
+    .query(({ ctx, input }) =>
+      retirementStatus(input.appId, ctx.userInfo.user.id),
+    ),
   redeploy: authenticatedProcedure
     .input(appIdInput)
     .mutation(async ({ ctx, input }) => {
       const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const previousDeployment = [...app.deployments].sort((a, b) => b.id - a.id)[0];
+      const previousDeployment = [...app.deployments].sort(
+        (a, b) => b.id - a.id,
+      )[0];
       if (!previousDeployment) {
         throw new TRPCError({
           code: "BAD_REQUEST",
