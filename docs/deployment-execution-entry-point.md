@@ -41,8 +41,10 @@ log storage. Tests inject fixture adapters at these external boundaries.
 This ticket extracts the existing behavior. It does not add durable retry
 reconciliation, recovery after persistence failure following runtime start,
 separate persisted publication/cleanup outcomes, or credential-file hardening.
-Builder preparation still precedes the existing cleanup scope; failures during
-that preparation require the later artifact-ownership work. Existing startup
+Builder preparation now registers acquired containers inside execution's failure
+cleanup scope; failed attempts also release their committed image and save
+independent cleanup diagnostics. See [failed deployment cleanup](failed-deployment-cleanup.md)
+for ownership, failure behavior, checks, and recovery limits. Existing startup
 working-directory and repository-name lookup behavior is also preserved.
 
 ## Checks and operational use
