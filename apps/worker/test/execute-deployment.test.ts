@@ -447,6 +447,8 @@ for (const scenario of [
     fixture.images.set("ghcr.io/other/runtime:stable", {
       id: "unrelated-image",
       changes: [],
+      files: {},
+      environment: [],
     });
     await assert.rejects(
       createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
@@ -535,6 +537,8 @@ test("failed-image cleanup preserves another app's tag when Docker reports share
   fixture.images.set("ghcr.io/other/runtime:stable", {
     id: "fixture-image",
     changes: [],
+    files: {},
+    environment: [],
   });
 
   await assert.rejects(
