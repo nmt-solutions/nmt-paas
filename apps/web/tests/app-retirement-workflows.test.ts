@@ -354,7 +354,7 @@ test(
       await import("../../worker/src/deployment/execute-deployment");
     const { createDockerCommandAdapter } =
       await import("../../worker/src/deployment/docker-command-adapter");
-    const { getDeployment, updateDeployment } =
+    const { getDeployment, updateDeployment, saveDeploymentCleanup } =
       await import("@repo/database/access-layer/deployment.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
@@ -365,6 +365,7 @@ test(
     const persistence = {
       getDeployment,
       updateDeployment,
+      saveDeploymentCleanup,
       createDeploymentLogs,
     };
     const execute = createDeploymentExecutor({

@@ -475,6 +475,15 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
       /Deployment not found/,
       state,
     );
+    await assert.rejects(
+      execute({
+        userId: state === "foreign-delivery" ? "another-owner" : userId,
+        deploymentId: queued.id,
+        action: "cleanup",
+      }),
+      /Deployment not found/,
+      `${state}: cleanup`,
+    );
     assert.deepEqual(
       (await docker.docker.listContainers({ all: true }))
         .map((container) => container.Id)
@@ -499,6 +508,7 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
       await caller.app.get({ appId: resource.appId })
     ).deployments.find((deployment) => deployment.id === queued.id);
     assert.equal(unchanged?.status, "queued", state);
+    assert.equal(unchanged?.cleanup, null, state);
     assert.deepEqual(unchanged?.deploymentLogs, [], state);
   }
 });
@@ -590,6 +600,28 @@ test("execution discards an eligible snapshot retired before it acquires the app
     deployment?.deploymentLogs.map((log) => log.message),
     ["private persisted log"],
   );
+  assert.equal(deployment?.cleanup, null);
+  // Cleanup must also discard a snapshot retired before its app turn, rather
+  // than touching Docker, writing history, or claiming a missing ledger.
+  retireSnapshot = true;
+  await assert.rejects(
+    execute({ userId, deploymentId: resource.deploymentId, action: "cleanup" }),
+    /Deployment not found/,
+  );
+  assert.deepEqual(
+    (await docker.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(docker.images.size, 0);
+  await fixtures.query(
+    `UPDATE "Projects" SET "resourceStatus" = 'active' WHERE id = $1`,
+    [resource.projectId],
+  );
+  const afterCleanup = (await owner(userId).app.get({ appId: resource.appId }))
+    .deployments[0];
+  assert.deepEqual(afterCleanup, deployment);
 });
 
 test("foreign and unauthenticated callers receive no private app data or host access", async () => {

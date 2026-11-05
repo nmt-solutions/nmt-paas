@@ -1,11 +1,38 @@
 {
-  "version": "8",
   "dialect": "postgres",
   "id": "51bbbe99-4636-411e-9c74-ac68f853bbed",
   "prevIds": [
-    "74d7680a-3c90-4ece-943d-074cf4d30501"
+    "38c64e49-cc13-416a-97e5-faa18517f436"
   ],
+  "version": "8",
   "ddl": [
+    {
+      "values": [
+        "active",
+        "inactive"
+      ],
+      "name": "resourceStatus",
+      "entityType": "enums",
+      "schema": "public"
+    },
+    {
+      "values": [
+        "github",
+        "bitbucket"
+      ],
+      "name": "GitProvider",
+      "entityType": "enums",
+      "schema": "public"
+    },
+    {
+      "values": [
+        "started",
+        "completed"
+      ],
+      "name": "state",
+      "entityType": "enums",
+      "schema": "public"
+    },
     {
       "values": [
         "preview",
@@ -30,33 +57,6 @@
       "schema": "public"
     },
     {
-      "values": [
-        "github",
-        "bitbucket"
-      ],
-      "name": "GitProvider",
-      "entityType": "enums",
-      "schema": "public"
-    },
-    {
-      "values": [
-        "started",
-        "completed"
-      ],
-      "name": "state",
-      "entityType": "enums",
-      "schema": "public"
-    },
-    {
-      "values": [
-        "active",
-        "inactive"
-      ],
-      "name": "resourceStatus",
-      "entityType": "enums",
-      "schema": "public"
-    },
-    {
       "isRlsEnabled": false,
       "name": "GithubAppInstallations",
       "entityType": "tables",
@@ -70,25 +70,25 @@
     },
     {
       "isRlsEnabled": false,
-      "name": "AppDomains",
-      "entityType": "tables",
-      "schema": "public"
-    },
-    {
-      "isRlsEnabled": false,
       "name": "Apps",
       "entityType": "tables",
       "schema": "public"
     },
     {
       "isRlsEnabled": false,
-      "name": "DeploymentLogs",
+      "name": "AppDomains",
       "entityType": "tables",
       "schema": "public"
     },
     {
       "isRlsEnabled": false,
       "name": "Deployments",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "DeploymentLogs",
       "entityType": "tables",
       "schema": "public"
     },
@@ -362,136 +362,6 @@
       "name": "id",
       "entityType": "columns",
       "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "bigint",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "appId",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "domain",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "AppEnv",
-      "typeSchema": "public",
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "env",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "userId",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "resourceStatus",
-      "typeSchema": "public",
-      "notNull": true,
-      "dimensions": 0,
-      "default": "'active'",
-      "generated": null,
-      "identity": null,
-      "name": "resourceStatus",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "createdAt",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "createdBy",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "timestamp with time zone",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": "now()",
-      "generated": null,
-      "identity": null,
-      "name": "modifiedAt",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "text",
-      "typeSchema": null,
-      "notNull": false,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "modifiedBy",
-      "entityType": "columns",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "type": "serial",
-      "typeSchema": null,
-      "notNull": true,
-      "dimensions": 0,
-      "default": null,
-      "generated": null,
-      "identity": null,
-      "name": "id",
-      "entityType": "columns",
-      "schema": "public",
       "table": "Apps"
     },
     {
@@ -635,7 +505,7 @@
       "name": "id",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "bigint",
@@ -645,10 +515,10 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "deploymentId",
+      "name": "appId",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "text",
@@ -658,10 +528,36 @@
       "default": null,
       "generated": null,
       "identity": null,
-      "name": "message",
+      "name": "domain",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
+    },
+    {
+      "type": "AppEnv",
+      "typeSchema": "public",
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "env",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "AppDomains"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "userId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "AppDomains"
     },
     {
       "type": "resourceStatus",
@@ -674,7 +570,7 @@
       "name": "resourceStatus",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "timestamp with time zone",
@@ -687,7 +583,7 @@
       "name": "createdAt",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "text",
@@ -700,7 +596,7 @@
       "name": "createdBy",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "timestamp with time zone",
@@ -713,7 +609,7 @@
       "name": "modifiedAt",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "text",
@@ -726,7 +622,7 @@
       "name": "modifiedBy",
       "entityType": "columns",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "type": "serial",
@@ -802,6 +698,19 @@
       "generated": null,
       "identity": null,
       "name": "status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "Deployments"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cleanup",
       "entityType": "columns",
       "schema": "public",
       "table": "Deployments"
@@ -896,6 +805,110 @@
       "entityType": "columns",
       "schema": "public",
       "table": "Deployments"
+    },
+    {
+      "type": "serial",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "deploymentId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "message",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "resourceStatus",
+      "typeSchema": "public",
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'active'",
+      "generated": null,
+      "identity": null,
+      "name": "resourceStatus",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "createdAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "createdBy",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "modifiedAt",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "modifiedBy",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "DeploymentLogs"
     },
     {
       "type": "serial",
@@ -1212,23 +1225,6 @@
     {
       "nameExplicit": false,
       "columns": [
-        "appId"
-      ],
-      "schemaTo": "public",
-      "tableTo": "Apps",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "NO ACTION",
-      "name": "AppDomains_appId_Apps_id_fkey",
-      "entityType": "fks",
-      "schema": "public",
-      "table": "AppDomains"
-    },
-    {
-      "nameExplicit": false,
-      "columns": [
         "projectId"
       ],
       "schemaTo": "public",
@@ -1246,19 +1242,19 @@
     {
       "nameExplicit": false,
       "columns": [
-        "deploymentId"
+        "appId"
       ],
       "schemaTo": "public",
-      "tableTo": "Deployments",
+      "tableTo": "Apps",
       "columnsTo": [
         "id"
       ],
       "onUpdate": "NO ACTION",
       "onDelete": "NO ACTION",
-      "name": "DeploymentLogs_deploymentId_Deployments_id_fkey",
+      "name": "AppDomains_appId_Apps_id_fkey",
       "entityType": "fks",
       "schema": "public",
-      "table": "DeploymentLogs"
+      "table": "AppDomains"
     },
     {
       "nameExplicit": false,
@@ -1276,6 +1272,23 @@
       "entityType": "fks",
       "schema": "public",
       "table": "Deployments"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "deploymentId"
+      ],
+      "schemaTo": "public",
+      "tableTo": "Deployments",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "DeploymentLogs_deploymentId_Deployments_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "DeploymentLogs"
     },
     {
       "nameExplicit": false,
@@ -1319,16 +1332,6 @@
         "id"
       ],
       "nameExplicit": false,
-      "name": "AppDomains_pkey",
-      "schema": "public",
-      "table": "AppDomains",
-      "entityType": "pks"
-    },
-    {
-      "columns": [
-        "id"
-      ],
-      "nameExplicit": false,
       "name": "Apps_pkey",
       "schema": "public",
       "table": "Apps",
@@ -1339,9 +1342,9 @@
         "id"
       ],
       "nameExplicit": false,
-      "name": "DeploymentLogs_pkey",
+      "name": "AppDomains_pkey",
       "schema": "public",
-      "table": "DeploymentLogs",
+      "table": "AppDomains",
       "entityType": "pks"
     },
     {
@@ -1352,6 +1355,16 @@
       "name": "Deployments_pkey",
       "schema": "public",
       "table": "Deployments",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "DeploymentLogs_pkey",
+      "schema": "public",
+      "table": "DeploymentLogs",
       "entityType": "pks"
     },
     {

@@ -101,6 +101,7 @@ test(
 
     let deploymentId;
     let failureStage = "clone";
+    const builders = new Map();
     const docker = {
       checkAuth: async () => {
         if (failureStage === "authentication") {
@@ -114,54 +115,63 @@ test(
       },
       pull: (_image, callback) => callback(null, Readable.from([])),
       listContainers: async () => [],
+      getContainer: (id) => builders.get(id),
       getImage: () => ({
         inspect: async () => {
           throw Object.assign(new Error("No such image"), { statusCode: 404 });
         },
       }),
       modem: { followProgress: (_stream, callback) => callback(null) },
-      createContainer: async () => ({
-        start: async () => {},
-        remove: async () => {},
-        inspect: async () => ({ Name: `/builder-${deploymentId}` }),
-        exec: async ({ Cmd, Tty, Env }) => {
-          const command = Cmd.join(" ");
-          const fails =
-            failureStage === "clone"
-              ? command.includes("git clone")
-              : command.includes("npm run build");
-          if (fails && failureStage === "environment") {
-            assert.ok(Env.includes("APP_PASSWORD=fixture-app-secret-value"));
-          }
-          return {
-            start: async () => {
-              const chunks =
-                fails && failureStage === "environment"
-                  ? [
-                      "configuration rejected fixture-app-",
-                      "secret-value\ncheck build configuration\n",
-                    ]
-                  : fails
+      createContainer: async ({ Labels }) => {
+        const id = `builder-${deploymentId}`;
+        const builder = {
+          id,
+          start: async () => {},
+          remove: async () => {
+            builders.delete(id);
+          },
+          inspect: async () => ({ Name: `/${id}`, Config: { Labels } }),
+          exec: async ({ Cmd, Tty, Env }) => {
+            const command = Cmd.join(" ");
+            const fails =
+              failureStage === "clone"
+                ? command.includes("git clone")
+                : command.includes("npm run build");
+            if (fails && failureStage === "environment") {
+              assert.ok(Env.includes("APP_PASSWORD=fixture-app-secret-value"));
+            }
+            return {
+              start: async () => {
+                const chunks =
+                  fails && failureStage === "environment"
                     ? [
-                        "git: repository access denied\nhttps://x-access-token:fixture-clone-",
-                        "token@github.com/fixture-owner/fixture-app.git\n",
+                        "configuration rejected fixture-app-",
+                        "secret-value\ncheck build configuration\n",
                       ]
-                    : ["command completed\n"];
-              // Docker exec without TTY sends multiplex headers between frames.
-              return Readable.from(
-                chunks.map((chunk) => {
-                  if (Tty) return chunk;
-                  const header = Buffer.alloc(8);
-                  header[0] = 1;
-                  header.writeUInt32BE(Buffer.byteLength(chunk), 4);
-                  return Buffer.concat([header, Buffer.from(chunk)]);
-                }),
-              );
-            },
-            inspect: async () => ({ ExitCode: fails ? 128 : 0 }),
-          };
-        },
-      }),
+                    : fails
+                      ? [
+                          "git: repository access denied\nhttps://x-access-token:fixture-clone-",
+                          "token@github.com/fixture-owner/fixture-app.git\n",
+                        ]
+                      : ["command completed\n"];
+                // Docker exec without TTY sends multiplex headers between frames.
+                return Readable.from(
+                  chunks.map((chunk) => {
+                    if (Tty) return chunk;
+                    const header = Buffer.alloc(8);
+                    header[0] = 1;
+                    header.writeUInt32BE(Buffer.byteLength(chunk), 4);
+                    return Buffer.concat([header, Buffer.from(chunk)]);
+                  }),
+                );
+              },
+              inspect: async () => ({ ExitCode: fails ? 128 : 0 }),
+            };
+          },
+        };
+        builders.set(id, builder);
+        return builder;
+      },
     };
     mock.module("dockerode", {
       defaultExport: class {
@@ -248,6 +258,15 @@ test(
       .map((log) => log.message)
       .join("\n");
     assert.equal(view.deployments[0].status, "failed");
+    assert.deepEqual(
+      view.deployments[0].cleanup.artifacts.map(({ id, kind, status }) => ({
+        id,
+        kind,
+        status,
+      })),
+      [{ id: `builder-${deploymentId}`, kind: "builder", status: "complete" }],
+    );
+    assert.equal(view.deployments[0].cleanup.status, "complete");
     const diagnostics = `${output.join("\n")}\n${messages}\n${format(failure)}`;
     assert.ok(
       !diagnostics.includes("fixture-clone-token"),
@@ -300,6 +319,11 @@ test(
       },
     );
     const updatedView = await getUserApp(app.id, "fixture-user");
+    assert.equal(
+      updatedView.deployments.find((item) => item.id === deploymentId).cleanup
+        .status,
+      "complete",
+    );
     const envMessages = updatedView.deployments
       .find((item) => item.id === deploymentId)
       .deploymentLogs.map((log) => log.message)

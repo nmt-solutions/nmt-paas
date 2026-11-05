@@ -1,46 +1,8 @@
 import { Worker } from "bullmq";
-import {
-  createDeploymentExecutor,
-  type DeploymentRequest,
-} from "../deployment/execute-deployment.js";
-
-import { withAppLifecycleLock } from "@repo/database/access-layer/app-retirement.dal";
-
+import type { DeploymentRequest } from "../deployment/execute-deployment.js";
+import { executeDeployment } from "../deployment/production-executor.js";
 import { redis } from "@repo/redis";
-
-import {
-  getDeployment,
-  updateDeployment,
-} from "@repo/database/access-layer/deployment.dal";
-
-import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
-
-import {
-  createBuilderContainer,
-  executeCommand,
-  getDocker,
-} from "../services/docker.js";
-
-import { getCloneUrl } from "../services/github.js";
-import env from "../env/vars.js";
-import { fetchEnvVars } from "../services/env-vars.js";
 import { safeDiagnosticError } from "../services/diagnostics.js";
-
-const executeDeployment = createDeploymentExecutor({
-  withAppLifecycleLock,
-  getDeployment,
-  updateDeployment,
-  createDeploymentLogs,
-  getDocker,
-  createBuilderContainer,
-  executeCommand,
-  getCloneUrl,
-  fetchEnvVars,
-  registry: {
-    username: env.variables.GITHUB_USER_NAME,
-    password: env.variables.GITHUB_PAT,
-  },
-});
 
 export const worker = new Worker<DeploymentRequest>(
   "deployment-queue",

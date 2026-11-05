@@ -4,6 +4,7 @@ import type { Socket } from "node:net";
 import Docker from "dockerode";
 import { createDockerCommandAdapter } from "../../src/deployment/docker-command-adapter.js";
 import type { DeploymentExecutionDependencies } from "../../src/deployment/execute-deployment.js";
+import type { DeploymentCleanup } from "@repo/database/schema";
 
 export const deploymentId = 42;
 export const userId = "fixture-owner";
@@ -255,7 +256,10 @@ export async function deploymentFixture({
       const id = decodeURIComponent(
         url.pathname.slice("/images/".length, -"/json".length),
       );
-      const image = images.get(id);
+      const image =
+        images.get(id) ??
+        [...images.values()].find((image) => image.id === id && image.labels) ??
+        [...images.values()].find((image) => image.id === id);
       return image
         ? send(200, { Id: image.id, Config: { Labels: image.labels ?? {} } })
         : send(404, { message: "No such image" });
@@ -283,7 +287,7 @@ export async function deploymentFixture({
       return;
     }
     const match = url.pathname.match(
-      /^\/containers\/([^/]+)(?:\/(start|json|logs))?$/,
+      /^\/containers\/([^/]+)(?:\/(start|stop|json|logs))?$/,
     );
     if (match) {
       const id = match[1]!;
@@ -295,6 +299,10 @@ export async function deploymentFixture({
         containers.delete(id);
         if (disappearOnRemove.includes(id))
           return send(404, { message: "No such container" });
+        return send(204);
+      }
+      if (match[2] === "stop") {
+        container.State = "exited";
         return send(204);
       }
       if (match[2] === "start") {
@@ -322,7 +330,7 @@ export async function deploymentFixture({
           Id: container.Id,
           Name: container.Names[0],
           State: { Running: container.State === "running" },
-          Config: configurations.get(id),
+          Config: configurations.get(id) ?? { Labels: container.Labels },
         });
       }
       if (match[2] === "logs") {
@@ -382,6 +390,8 @@ export async function deploymentFixture({
 
   const deployment = {
     id: deploymentId,
+    userId,
+    cleanup: null as DeploymentCleanup | null,
     appId: 7,
     repoId: 123,
     env: "production" as const,
@@ -405,11 +415,16 @@ export async function deploymentFixture({
     [];
   const deployments = new Map([[deploymentId, deployment]]);
   const database = {
+    saveDeploymentCleanup: async (id: number, cleanup: DeploymentCleanup) => {
+      const record = deployments.get(id);
+      if (record) record.cleanup = structuredClone(cleanup);
+    },
     getDeployment: async (id: number) => deployments.get(id),
     createDeployment: async (id: number, appId = 7) => {
       const next = structuredClone(deployment);
       next.id = id;
       next.appId = appId;
+      next.cleanup = null;
       if (appId !== 7) next.app.appDomains[0]!.domain = `app-${appId}.invalid`;
       deployments.set(id, next);
       return next;
@@ -437,6 +452,9 @@ export async function deploymentFixture({
   };
 
   return {
+    restoreStart: () => {
+      failStart = undefined;
+    },
     dependencies,
     database,
     docker,

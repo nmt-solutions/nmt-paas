@@ -1,7 +1,22 @@
-import { pgTable, serial, text, bigint } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, bigint, jsonb } from "drizzle-orm/pg-core";
 import { DeploymentStatus, AppEnv } from "../enums";
 import { ResourceStatus, timestampDefault } from "../common";
 import { Apps } from "./apps";
+
+export type DeploymentCleanupArtifact = {
+  id: string;
+  kind: "builder" | "runtime" | "image" | "prior runtime";
+  // Labels captured when ownership was established; removal always uses the ID.
+  labels: Record<string, string>;
+  replacementId?: string;
+  status: "pending" | "failed" | "complete" | "preserved";
+  error?: string;
+};
+
+export type DeploymentCleanup = {
+  status: "pending" | "complete";
+  artifacts: DeploymentCleanupArtifact[];
+};
 
 export const Deployments = pgTable("Deployments", {
   id: serial("id").primaryKey(),
@@ -12,6 +27,7 @@ export const Deployments = pgTable("Deployments", {
   branch: text("branch").notNull(),
   commit: text("commit").notNull(),
   status: DeploymentStatus("status").notNull().default("queued"),
+  cleanup: jsonb("cleanup").$type<DeploymentCleanup>(),
   env: AppEnv("env").notNull(),
   userId: text("userId").notNull(),
   resourceStatus: ResourceStatus(),

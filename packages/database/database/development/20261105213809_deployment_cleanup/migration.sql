@@ -1,0 +1,1 @@
+ALTER TABLE "Deployments" ADD COLUMN "cleanup" jsonb;

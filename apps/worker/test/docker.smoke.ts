@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import Docker from "dockerode";
+import type { DeploymentCleanup } from "@repo/database/schema";
 import { createDockerCommandAdapter } from "../src/deployment/docker-command-adapter.js";
 import {
   createDeploymentExecutor,
@@ -39,6 +40,7 @@ test(
     });
 
     const deployment = {
+      cleanup: null as DeploymentCleanup | null,
       appId: deploymentId,
       repoId: 1,
       branch: "fixture",
@@ -62,6 +64,12 @@ test(
     };
     const logs: string[] = [];
     const database = {
+      saveDeploymentCleanup: async (
+        _id: number,
+        cleanup: DeploymentCleanup,
+      ) => {
+        deployment.cleanup = structuredClone(cleanup);
+      },
       getDeployment: async () => deployment,
       updateDeployment: async (params: { status: string }) => {
         deployment.status = params.status;
@@ -140,6 +148,7 @@ test(
         }),
     );
     const deployment = {
+      cleanup: null as DeploymentCleanup | null,
       appId: deploymentId,
       repoId: 1,
       branch: "fixture",
@@ -163,6 +172,12 @@ test(
     };
     const logs: string[] = [];
     const database = {
+      saveDeploymentCleanup: async (
+        _id: number,
+        cleanup: DeploymentCleanup,
+      ) => {
+        deployment.cleanup = structuredClone(cleanup);
+      },
       getDeployment: async () => deployment,
       updateDeployment: async (params: { status: string }) => {
         deployment.status = params.status;
@@ -265,6 +280,7 @@ test(
     });
     acquired.push(runtime);
     const deployment = {
+      cleanup: null as DeploymentCleanup | null,
       appId,
       repoId: 1,
       branch: "fixture",
@@ -290,6 +306,9 @@ test(
       throw new Error("A recovered runtime must not build again");
     };
     const dependencies: DeploymentExecutionDependencies = {
+      saveDeploymentCleanup: async (_id, cleanup) => {
+        deployment.cleanup = structuredClone(cleanup);
+      },
       getDeployment: async () => deployment,
       updateDeployment: async ({ status }) => {
         deployment.status = status;

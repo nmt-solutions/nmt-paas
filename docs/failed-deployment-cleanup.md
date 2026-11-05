@@ -35,15 +35,14 @@ command, or start diagnostic remains the attempt failure. A separate line such a
 Both diagnostics are scrubbed in the same per-attempt scope, including registered
 clone credentials, decrypted environment values, and the registry password.
 
-These lines survive a history reload and identify artifacts for an operator to
-inspect by ID. An authorized operator can inspect that specific container or image
-and retry its removal after resolving the Docker error. Confirm the identified
-artifact belongs to this failed attempt before removal; image references may
-belong to a running container. There is no host-wide cleanup in this workflow.
-Same-deployment reconciliation, including recovery after post-start persistence
-failure or worker restart, is described in
-[deployment retry recovery](deployment-retry-recovery.md). It does not add a
-durable cleanup ledger or host-wide cleanup action.
+These lines survive a history reload. The separate cleanup ledger now records
+pending artifact IDs and outcomes before removal, and the workspace displays them
+for the selected deployment. Use the documented
+[cleanup-only operator recovery](deployment-cleanup-recovery.md) after resolving a
+removal problem; it preserves the runtime-start outcome and does not rebuild.
+Same-deployment reconciliation after post-start persistence failure or worker
+restart is described in [deployment retry recovery](deployment-retry-recovery.md).
+There is no host-wide cleanup in either workflow.
 
 If persistence is unavailable, failed-status or diagnostic writes can fail; their
 scrubbed errors go to worker output without replacing the original rejection.

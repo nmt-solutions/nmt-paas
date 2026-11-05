@@ -58,7 +58,9 @@ failed job through BullMQ's supported retry operation. Do not create a new
 deployment merely to clear a Docker-name conflict. Legacy artifacts without the
 new ownership labels need operator inspection; execution will not guess their
 ownership or relabel them. Keep worker output when persistence is unavailable.
-This increment adds no independent durable cleanup ledger or recovery endpoint.
+Incomplete artifact removals now have a focused durable ledger and
+[cleanup-only operator recovery](deployment-cleanup-recovery.md). That workflow
+does not rebuild or redeploy and leaves the runtime-start outcome unchanged.
 
 ## Supported concurrency
 
@@ -68,9 +70,11 @@ inspection, building, start, persistence, retirement, and failure reporting. Eac
 attempt releases coordination in `finally`; the last waiter removes its entry.
 Another app can proceed while one app waits on Docker or persistence. Locks order
 execution attempts as they arrive, including delayed retries; they do not promise
-submission-time ordering. They are process-local, not distributed locks. Multiple
-worker processes, replicas, and independently constructed executors need a
-separate coordination design before they can safely share a host.
+submission-time ordering. These FIFO locks are process-local. Production execution
+also takes the per-app PostgreSQL lifecycle lock shared with owner retirement and
+cleanup recovery; see [app retirement](app-retirement-operations.md). The supported
+model remains one worker process per host; this increment does not establish a
+multi-worker scheduler or distributed delivery guarantee.
 
 ## Verification
 
