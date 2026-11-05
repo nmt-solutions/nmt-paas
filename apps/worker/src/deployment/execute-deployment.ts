@@ -80,6 +80,8 @@ type DeploymentContainer = {
 /**
  * Construct once per worker process to share its app locks.
  * No production adapters are loaded or opened by this module.
+ * A successful execution confirms container start, without an application
+ * readiness check. Replacement retirement is awaited; publication is background.
  */
 export const createDeploymentExecutor = ({
   getDeployment,
@@ -446,11 +448,13 @@ export const createDeploymentExecutor = ({
 
     const finishRuntime = async (container: Docker.Container) => {
       await updateDeployment({ id: deploymentId, status: "success" }, userId);
+      const startMessage = `Container started for ${appName} at ${appDomain}. Application readiness has not been checked.`;
       await createDeploymentLogs({
         deploymentId,
-        message: `${appName} deployed successfully at ${appDomain}.`,
+        message: startMessage,
         createdBy: userId,
       });
+      console.log(startMessage);
       const oldContainers = await getDeploymentContainers(
         docker,
         deployment.appId,

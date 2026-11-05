@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit",
+    "test:deployment-result": "tsx --tsconfig test/tsconfig.json --experimental-test-module-mocks --test test/deployment-result.test.mjs",
     "test:auth": "node tests/run-auth-workflows.mjs",
     "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts"
   },
@@ -59,6 +60,7 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9.39.1",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.0",
     "typescript": "^5"

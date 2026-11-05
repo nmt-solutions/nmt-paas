@@ -203,7 +203,10 @@ test(
           .map((log) => log.message)
           .join("\n");
         assert.match(logs, /github.com\/moved-org\/renamed-repository.git/);
-        assert.match(logs, /renamed-app deployed successfully/);
+        assert.match(
+          logs,
+          /Container started for renamed-app at repository\.example\.test\. Application readiness has not been checked\./,
+        );
         assert.ok(!logs.includes("fixture-clone-token"));
       },
     );

@@ -23,6 +23,7 @@ import {
 import toast from "@/components/toast/toast";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { deploymentStatusLabel } from "@/utils/deployment-status";
 
 const ProjectsPage = () => {
   const trpc = useTRPC();
@@ -110,7 +111,7 @@ const ProjectsPage = () => {
                       <div>
                         <p className="font-medium">{app.appName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {latest?.status ?? "Not deployed"}
+                          {deploymentStatusLabel(latest?.status ?? "Not deployed")}
                         </p>
                       </div>
                       <ArrowUpRight className="size-4 text-muted-foreground transition group-hover:text-primary" />

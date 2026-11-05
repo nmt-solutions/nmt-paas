@@ -242,7 +242,7 @@ test(
           const condition =
             kind === "status"
               ? "NEW.status = 'success'"
-              : "NEW.message LIKE 'fixture-app deployed successfully%'";
+              : "NEW.message LIKE 'Container started for fixture-app at %'";
           await fixtureDb.query(
             `CREATE OR REPLACE FUNCTION reject_recovery_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${condition} THEN RAISE EXCEPTION 'fixture post-start write rejected fixture-registry-token'; END IF; RETURN NEW; END $$`,
           );
