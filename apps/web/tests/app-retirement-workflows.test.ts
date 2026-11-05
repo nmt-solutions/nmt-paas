@@ -244,6 +244,24 @@ test("retiring one app preserves its active project and deployable sibling", asy
   await assert.rejects(caller.app.get({ appId: retired.appId }), {
     code: "NOT_FOUND",
   });
+  await assert.rejects(
+    caller.app.deploymentLogs({
+      appId: retired.appId,
+      deploymentId: retired.deploymentId,
+    }),
+    {
+      code: "NOT_FOUND",
+    },
+  );
+  const siblingHistory = await caller.app.deploymentLogs({
+    appId: sibling.appId,
+    deploymentId: sibling.deploymentId,
+  });
+  assert.equal(siblingHistory.hasMore, false);
+  assert.deepEqual(
+    siblingHistory.logs.map((log) => log.message),
+    ["private persisted log"],
+  );
   assert.equal(
     await caller.app.getLatestSuccessDeployment({ appId: retired.appId }),
     undefined,
@@ -649,6 +667,15 @@ test("a visibility write failure rolls retirement back before host cleanup", asy
   assert.equal(app.retirement, null);
   assert.equal(app.appDomains[0]?.resourceStatus, "active");
   assert.equal(app.deployments[0]?.resourceStatus, "active");
+  const history = await caller.app.deploymentLogs({
+    appId: resource.appId,
+    deploymentId: resource.deploymentId,
+  });
+  assert.equal(history.hasMore, false);
+  assert.deepEqual(
+    history.logs.map((log) => log.message),
+    ["private persisted log"],
+  );
 });
 
 test(

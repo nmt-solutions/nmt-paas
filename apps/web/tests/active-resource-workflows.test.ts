@@ -525,7 +525,12 @@ test("queued delivery after retirement cannot start a runtime or alter deploymen
     ).deployments.find((deployment) => deployment.id === queued.id);
     assert.equal(unchanged?.status, "queued", state);
     assert.equal(unchanged?.cleanup, null, state);
-    assert.deepEqual(unchanged?.deploymentLogs, [], state);
+    const logs = await caller.app.deploymentLogs({
+      appId: resource.appId,
+      deploymentId: queued.id,
+    });
+    assert.deepEqual(logs.logs, [], state);
+    assert.equal(logs.hasMore, false, state);
   }
 });
 
@@ -615,8 +620,14 @@ test("execution discards an eligible snapshot retired before it acquires the app
   const deployment = (await owner(userId).app.get({ appId: resource.appId }))
     .deployments[0];
   assert.equal(deployment?.status, "success");
+  const history = await owner(userId).app.deploymentLogs({
+    appId: resource.appId,
+    deploymentId: resource.deploymentId,
+  });
+  assert.equal(history.hasMore, false);
+  assert.ok(history.logs.every((log) => !log.truncated));
   assert.deepEqual(
-    deployment?.deploymentLogs.map((log) => log.message),
+    history.logs.map((log) => log.message),
     ["private persisted log"],
   );
   assert.equal(deployment?.cleanup, null);
@@ -641,6 +652,13 @@ test("execution discards an eligible snapshot retired before it acquires the app
   const afterCleanup = (await owner(userId).app.get({ appId: resource.appId }))
     .deployments[0];
   assert.deepEqual(afterCleanup, deployment);
+  assert.deepEqual(
+    await owner(userId).app.deploymentLogs({
+      appId: resource.appId,
+      deploymentId: resource.deploymentId,
+    }),
+    history,
+  );
   await publicationPersistence.recordPublication(
     {
       deploymentId: resource.deploymentId,
@@ -673,6 +691,13 @@ test("execution discards an eligible snapshot retired before it acquires the app
   assert.deepEqual(
     (await owner(userId).app.get({ appId: resource.appId })).deployments[0],
     deployment,
+  );
+  assert.deepEqual(
+    await owner(userId).app.deploymentLogs({
+      appId: resource.appId,
+      deploymentId: resource.deploymentId,
+    }),
+    history,
   );
   assert.equal(docker.images.size, 0);
 });

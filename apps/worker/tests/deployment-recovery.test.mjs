@@ -13,6 +13,7 @@ import { URL } from "node:url";
 import test, { mock } from "node:test";
 import { Queue, QueueEvents } from "bullmq";
 import pg from "pg";
+import { readHistoryLogs } from "./history.mjs";
 import {
   deploymentFixture,
   deploymentId,
@@ -331,7 +332,7 @@ test(
               history.deployments[0].status,
               kind === "status" ? "starting" : "success",
             );
-            const logs = history.deployments[0].deploymentLogs
+            const logs = (await readHistoryLogs(7, deploymentId, userId))
               .map((log) => log.message)
               .join("\n");
             assert.match(logs, /Runtime started; recovery pending/);
@@ -366,9 +367,7 @@ test(
           assert.deepEqual(workerErrors, []);
           let runtimeLogs = "";
           for (let count = 0; count < 100; count++) {
-            runtimeLogs = (
-              await getUserApp(7, userId)
-            ).deployments[0].deploymentLogs
+            runtimeLogs = (await readHistoryLogs(7, deploymentId, userId))
               .map((log) => log.message)
               .join("\n");
             if (runtimeLogs.includes("runtime boot")) break;

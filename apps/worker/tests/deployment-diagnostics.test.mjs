@@ -8,6 +8,7 @@ import { Readable } from "node:stream";
 import { format } from "node:util";
 import test, { mock } from "node:test";
 import pg from "pg";
+import { readHistoryLogs } from "./history.mjs";
 import process from "node:process";
 import { URL } from "node:url";
 
@@ -254,7 +255,9 @@ test(
       },
     );
     const view = await getUserApp(app.id, "fixture-user");
-    const messages = view.deployments[0].deploymentLogs
+    const messages = (
+      await readHistoryLogs(app.id, deploymentId, "fixture-user")
+    )
       .map((log) => log.message)
       .join("\n");
     assert.equal(view.deployments[0].status, "failed");
@@ -324,9 +327,10 @@ test(
         .status,
       "complete",
     );
-    const envMessages = updatedView.deployments
-      .find((item) => item.id === deploymentId)
-      .deploymentLogs.map((log) => log.message)
+    const envMessages = (
+      await readHistoryLogs(app.id, deploymentId, "fixture-user")
+    )
+      .map((log) => log.message)
       .join("\n");
     const envDiagnostics = `${output.join("")}\n${envMessages}\n${format(failure)}`;
     assert.ok(
@@ -359,10 +363,10 @@ test(
         return true;
       },
     );
-    const authView = await getUserApp(app.id, "fixture-user");
-    const authMessages = authView.deployments
-      .find((item) => item.id === deploymentId)
-      .deploymentLogs.map((log) => log.message)
+    const authMessages = (
+      await readHistoryLogs(app.id, deploymentId, "fixture-user")
+    )
+      .map((log) => log.message)
       .join("\n");
     const authDiagnostics = `${output.join("\n")}\n${authMessages}\n${format(failure)}`;
     assert.ok(

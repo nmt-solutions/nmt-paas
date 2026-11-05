@@ -14,6 +14,11 @@ import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
 import { retireApp, retirementStatus } from "@/services/apps";
 import { redeployApp } from "@/services/projects";
+import { readDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
+import {
+  DEPLOYMENT_LOG_MAX_PAGE_SIZE,
+  DEPLOYMENT_LOG_PAGE_SIZE,
+} from "@repo/database/access-layer/deployment-log-limits";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
 
@@ -23,7 +28,8 @@ const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
       reject(
         new TRPCError({
           code: "TIMEOUT",
-          message: "The deployment service did not respond in time. Please try again.",
+          message:
+            "The deployment service did not respond in time. Please try again.",
         }),
       );
     }, milliseconds);
@@ -48,6 +54,39 @@ const requireApp = async (appId: number, userId: string) => {
 };
 
 export const appRouter = createTRPCRouter({
+  deploymentLogs: authenticatedProcedure
+    .input(
+      appIdInput
+        .extend({
+          deploymentId: z.number().int().positive(),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(DEPLOYMENT_LOG_MAX_PAGE_SIZE)
+            .default(DEPLOYMENT_LOG_PAGE_SIZE),
+          before: z.number().int().positive().optional(),
+          after: z.number().int().nonnegative().optional(),
+        })
+        .refine(
+          (input) => input.before === undefined || input.after === undefined,
+          {
+            message: "Choose either before or after",
+          },
+        ),
+    )
+    .query(async ({ ctx, input }) => {
+      const page = await readDeploymentLogs({
+        ...input,
+        userId: ctx.userInfo.user.id,
+      });
+      if (!page)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Deployment not found",
+        });
+      return page;
+    }),
   get: authenticatedProcedure
     .input(appIdInput)
     .query(async ({ ctx, input }) => {
@@ -124,7 +163,9 @@ export const appRouter = createTRPCRouter({
     .input(appIdInput)
     .mutation(async ({ ctx, input }) => {
       const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const previousDeployment = [...app.deployments].sort((a, b) => b.id - a.id)[0];
+      const previousDeployment = [...app.deployments].sort(
+        (a, b) => b.id - a.id,
+      )[0];
       if (!previousDeployment) {
         throw new TRPCError({
           code: "BAD_REQUEST",
