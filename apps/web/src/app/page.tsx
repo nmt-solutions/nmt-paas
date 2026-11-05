@@ -138,7 +138,7 @@ export default async function Home() {
         <Feature
           icon={<Cloud />}
           title="Deploy"
-          body="Watch a commit become a healthy production app."
+          body="Follow a commit from build to container start."
         />
       </section>
     </main>
