@@ -1,7 +1,9 @@
+import { getUserProjects } from "@repo/database/access-layer/project.dal";
 import {
-  deleteProject,
-  getUserProjects,
-} from "@repo/database/access-layer/project.dal";
+  retireProject,
+  projectRetirementStatus,
+  retiredProjects,
+} from "../../services/project-retirement";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
 import z from "zod";
 
@@ -10,9 +12,19 @@ export const projectRouter = createTRPCRouter({
     getUserProjects(ctx.userInfo.user.id),
   ),
 
+  retired: authenticatedProcedure.query(({ ctx }) =>
+    retiredProjects(ctx.userInfo.user.id),
+  ),
+
+  retirementStatus: authenticatedProcedure
+    .input(z.object({ projectId: z.number().int().positive() }))
+    .query(({ ctx, input }) =>
+      projectRetirementStatus(input.projectId, ctx.userInfo.user.id),
+    ),
+
   deleteProject: authenticatedProcedure
     .input(z.object({ projectId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
-      return deleteProject(input.projectId, ctx.userInfo.user.id);
+      return retireProject(input.projectId, ctx.userInfo.user.id);
     }),
 });

@@ -18,13 +18,26 @@ import {
 assert.ok(process.env.AUTH_TEST_DATABASE_URL, "Run npm run test:retirement");
 const hostRequests: string[] = [];
 const cleanupFailures: Record<string, string> = {};
-const dockerFixture = await deploymentFixture({ failRemove: cleanupFailures });
+const lostRetirementAcknowledgements = new Set<string>();
+let beforeRuntimeRemoval: ((id: string) => Promise<void>) | undefined;
+const dockerFixture = await deploymentFixture({
+  failRemove: cleanupFailures,
+  beforeRemove: async (id) => {
+    await beforeRuntimeRemoval?.(id);
+  },
+});
 
 const host = createServer((request, response) => {
   assert.equal(request.headers.authorization, "Bearer fixture-host-key");
   hostRequests.push(`${request.method} ${request.url}`);
-  if (request.url?.startsWith("/apps/"))
+  if (request.url?.startsWith("/apps/")) {
+    if (lostRetirementAcknowledgements.has(request.url))
+      response.end = () => {
+        response.destroy();
+        return response;
+      };
     return retirementHost(request, response);
+  }
   if (request.url?.startsWith("/logs/stream/")) {
     const deploymentId = Number(request.url.split("/").at(-1));
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -342,6 +355,754 @@ function gate() {
   });
   return { promise, resolve };
 }
+
+test("project retirement atomically hides every child and preserves another owner's project", async () => {
+  const userId = "project-retirement-owner";
+  const caller = owner(userId);
+  const first = await resourceFixture(userId);
+  const second = await resourceFixture(userId);
+  await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+    first.projectId,
+    second.appId,
+  ]);
+  const foreign = await resourceFixture("preserved-project-owner");
+  const unrelated = await resourceFixture(userId);
+  const runtimes = await Promise.all(
+    [first, second, foreign, unrelated].map((resource) =>
+      seedRuntime(resource.appId, resource.deploymentId),
+    ),
+  );
+  await caller.project.deleteProject({ projectId: first.projectId });
+  assert.ok(
+    !(await caller.project.list()).some(
+      (project) => project.id === first.projectId,
+    ),
+  );
+  for (const resource of [first, second]) {
+    const outcome = await caller.app.retirementStatus({
+      appId: resource.appId,
+    });
+    assert.equal(outcome.resourceStatus, "inactive");
+    assert.equal(outcome.retirement?.status, "complete");
+    await assert.rejects(caller.app.get({ appId: resource.appId }), {
+      code: "NOT_FOUND",
+    });
+    await assert.rejects(caller.app.redeploy({ appId: resource.appId }), {
+      code: "NOT_FOUND",
+    });
+    assert.equal(
+      await caller.app.getLatestSuccessDeployment({ appId: resource.appId }),
+      undefined,
+    );
+  }
+  for (const runtime of runtimes.slice(0, 2))
+    await assert.rejects(
+      dockerFixture.docker.getContainer(runtime.id).inspect(),
+      { statusCode: 404 },
+    );
+  assert.equal(
+    (await dockerFixture.docker.getContainer(runtimes[2]!.id).inspect()).State
+      .Running,
+    true,
+  );
+  assert.equal(
+    (await owner("preserved-project-owner").app.get({ appId: foreign.appId }))
+      .resourceStatus,
+    "active",
+  );
+  assert.equal(
+    (await caller.app.get({ appId: unrelated.appId })).resourceStatus,
+    "active",
+  );
+  assert.equal(
+    (await dockerFixture.docker.getContainer(runtimes[3]!.id).inspect()).State
+      .Running,
+    true,
+  );
+  assert.ok(!hostRequests.some((path) => path.includes("/admin/")));
+});
+
+test("legacy inactive projects recover missing child retirement state and empty projects converge without host work", async () => {
+  const userId = "legacy-project-owner";
+  const caller = owner(userId);
+  const resource = await resourceFixture(userId);
+  await seedRuntime(resource.appId, resource.deploymentId);
+  await fixtures.query(
+    `UPDATE "Projects" SET "resourceStatus" = 'inactive' WHERE id = $1`,
+    [resource.projectId],
+  );
+  const legacy = await caller.project.retirementStatus({
+    projectId: resource.projectId,
+  });
+  assert.equal(legacy.retirement?.status, "pending");
+  assert.equal(legacy.apps[0]!.resourceStatus, "active");
+  assert.equal(legacy.apps[0]!.retirement, null);
+  assert.equal(
+    (await caller.project.deleteProject({ projectId: resource.projectId }))
+      .retirement?.status,
+    "complete",
+  );
+  const empty = (
+    await fixtures.query<{ id: number }>(
+      `INSERT INTO "Projects" (name, "userId", "createdBy") VALUES ('Empty project', $1, $1) RETURNING id`,
+      [userId],
+    )
+  ).rows[0]!;
+  const beforeHost = hostRequests.length;
+  const retired = await caller.project.deleteProject({ projectId: empty.id });
+  assert.equal(retired.retirement?.status, "complete");
+  assert.deepEqual(retired.apps, []);
+  assert.deepEqual(
+    await caller.project.deleteProject({ projectId: empty.id }),
+    retired,
+  );
+  assert.equal(hostRequests.length, beforeHost);
+});
+
+test(
+  "project cleanup retains per-app outcomes and a fresh owner process retries only unfinished apps",
+  { timeout: 60000 },
+  async () => {
+    const userId = "project-recovery-owner";
+    const caller = owner(userId);
+    const first = await resourceFixture(userId);
+    const second = await resourceFixture(userId);
+    const third = await resourceFixture(userId);
+    for (const resource of [second, third])
+      await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+        first.projectId,
+        resource.appId,
+      ]);
+    const runtimes = await Promise.all(
+      [first, second, third].map((resource) =>
+        seedRuntime(resource.appId, resource.deploymentId),
+      ),
+    );
+    // An already-retired app remains complete when its project is retired later.
+    await caller.app.delete({ appId: first.appId });
+    cleanupFailures[runtimes[1]!.id] = "fixture-host-secret must stay private";
+    const result = await caller.project.deleteProject({
+      projectId: first.projectId,
+    });
+    assert.equal(result.retirement?.status, "pending");
+    assert.deepEqual(
+      result.apps.map((app) => app.retirement?.status),
+      ["complete", "pending", "complete"],
+    );
+    assert.ok(!JSON.stringify(result).includes("fixture-host-secret"));
+    assert.deepEqual(
+      await caller.project.retirementStatus({ projectId: first.projectId }),
+      result,
+    );
+    assert.ok(
+      (await caller.project.retired()).some(
+        (project) => project.id === first.projectId,
+      ),
+    );
+    const request = async (retry = false) => {
+      const child = spawn(
+        process.execPath,
+        [
+          "--import",
+          "./tests/server-only.mjs",
+          "--import",
+          "tsx",
+          "tests/fixtures/project-retirement-request.mjs",
+          String(first.projectId),
+          userId,
+          ...(retry ? ["retry"] : []),
+        ],
+        {
+          cwd: fileURLToPath(new URL("../", import.meta.url)),
+          timeout: 20000,
+          env: {
+            ...process.env,
+            TSX_TSCONFIG_PATH: fileURLToPath(
+              new URL("../tsconfig.json", import.meta.url),
+            ),
+          },
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let output = "";
+      let errors = "";
+      child.stdout.on("data", (data) => {
+        output += data;
+      });
+      child.stderr.on("data", (data) => {
+        errors += data;
+      });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", resolve);
+      });
+      assert.equal(code, 0, `${errors}\n${output}`);
+      return JSON.parse(output.trim().split("\n").at(-1)!);
+    };
+    assert.deepEqual(await request(), result);
+    delete cleanupFailures[runtimes[1]!.id];
+    const beforeRetry = hostRequests.length;
+    const recovered = await request(true);
+    assert.equal(recovered.retirement.status, "complete");
+    assert.deepEqual(
+      recovered.apps.map(
+        (app: { retirement: { status: string } }) => app.retirement.status,
+      ),
+      ["complete", "complete", "complete"],
+    );
+    assert.deepEqual(hostRequests.slice(beforeRetry), [
+      `POST /apps/${second.appId}/retire`,
+    ]);
+    const beforeRepeat = hostRequests.length;
+    assert.deepEqual(
+      await caller.project.deleteProject({ projectId: first.projectId }),
+      recovered,
+    );
+    assert.equal(hostRequests.length, beforeRepeat);
+    for (const runtime of runtimes)
+      await assert.rejects(
+        dockerFixture.docker.getContainer(runtime.id).inspect(),
+        { statusCode: 404 },
+      );
+  },
+);
+
+test("every project visibility failure including commit rolls back all apps before host cleanup", async () => {
+  const userId = "project-rollback-owner";
+  const caller = owner(userId);
+  const first = await resourceFixture(userId);
+  const second = await resourceFixture(userId);
+  await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+    first.projectId,
+    second.appId,
+  ]);
+  await Promise.all(
+    [first, second].map((resource) =>
+      seedRuntime(resource.appId, resource.deploymentId),
+    ),
+  );
+  const beforeApps = await Promise.all(
+    [first, second].map((resource) =>
+      caller.app.get({ appId: resource.appId }),
+    ),
+  );
+  for (const fault of [
+    "Projects",
+    "Apps",
+    "AppDomains",
+    "Deployments",
+    "commit",
+  ]) {
+    const table = fault === "commit" ? "Deployments" : fault;
+    const condition =
+      table === "Projects"
+        ? `NEW.id = ${first.projectId}`
+        : table === "Apps"
+          ? `NEW.id = ${second.appId}`
+          : `NEW."appId" = ${second.appId}`;
+    await fixtures.query(
+      `CREATE FUNCTION reject_project_retirement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${condition} AND NEW."resourceStatus" = 'inactive' THEN RAISE EXCEPTION 'fixture visibility secret'; END IF; RETURN NEW; END $$`,
+    );
+    await fixtures.query(
+      fault === "commit"
+        ? `CREATE CONSTRAINT TRIGGER reject_project_retirement AFTER UPDATE ON "${table}" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_project_retirement()`
+        : `CREATE TRIGGER reject_project_retirement BEFORE UPDATE ON "${table}" FOR EACH ROW EXECUTE FUNCTION reject_project_retirement()`,
+    );
+    const beforeHost = hostRequests.length;
+    try {
+      await assert.rejects(
+        caller.project.deleteProject({ projectId: first.projectId }),
+        {
+          code: "INTERNAL_SERVER_ERROR",
+          message:
+            "Unable to retire project. Check its status before retrying.",
+        },
+      );
+    } finally {
+      await fixtures.query(
+        `DROP TRIGGER reject_project_retirement ON "${table}"; DROP FUNCTION reject_project_retirement()`,
+      );
+    }
+    assert.equal(
+      hostRequests.length,
+      beforeHost,
+      `${fault}: no cleanup before commit`,
+    );
+    assert.deepEqual(
+      await Promise.all(
+        [first, second].map((resource) =>
+          caller.app.get({ appId: resource.appId }),
+        ),
+      ),
+      beforeApps,
+      `${fault}: all existing app/domain/deployment values survive`,
+    );
+    assert.equal(
+      (await caller.project.retirementStatus({ projectId: first.projectId }))
+        .resourceStatus,
+      "active",
+    );
+  }
+  // Failed requests released all locks; another request can immediately finish.
+  assert.equal(
+    (await caller.project.deleteProject({ projectId: first.projectId }))
+      .retirement?.status,
+    "complete",
+  );
+});
+
+test("lost host acknowledgement and failed per-app outcome writes remain recoverable without skipping siblings", async () => {
+  const userId = "project-outcome-owner";
+  const caller = owner(userId);
+  const resources = [
+    await resourceFixture(userId),
+    await resourceFixture(userId),
+    await resourceFixture(userId),
+  ];
+  const first = resources[0]!;
+  for (const resource of resources.slice(1))
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      first.projectId,
+      resource.appId,
+    ]);
+  const runtimes = await Promise.all(
+    resources.map((resource) =>
+      seedRuntime(resource.appId, resource.deploymentId),
+    ),
+  );
+  const lostPath = `/apps/${first.appId}/retire`;
+  lostRetirementAcknowledgements.add(lostPath);
+  await fixtures.query(
+    `CREATE FUNCTION reject_project_outcome() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = ${resources[1]!.appId} AND NEW.retirement->>'status' = 'complete' THEN RAISE EXCEPTION 'fixture outcome secret'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_project_outcome BEFORE UPDATE ON "Apps" FOR EACH ROW EXECUTE FUNCTION reject_project_outcome()`,
+  );
+  try {
+    const pending = await caller.project.deleteProject({
+      projectId: first.projectId,
+    });
+    assert.equal(pending.retirement?.status, "pending");
+    assert.deepEqual(
+      pending.apps.map((app) => app.retirement?.status),
+      ["pending", "pending", "complete"],
+    );
+    assert.ok(!JSON.stringify(pending).includes("secret"));
+    for (const runtime of runtimes)
+      await assert.rejects(
+        dockerFixture.docker.getContainer(runtime.id).inspect(),
+        { statusCode: 404 },
+      );
+  } finally {
+    lostRetirementAcknowledgements.delete(lostPath);
+    await fixtures.query(
+      `DROP TRIGGER reject_project_outcome ON "Apps"; DROP FUNCTION reject_project_outcome()`,
+    );
+  }
+  assert.equal(
+    (await caller.project.deleteProject({ projectId: first.projectId }))
+      .retirement?.status,
+    "complete",
+  );
+});
+
+test("project outcome discovery and retry deny foreign and anonymous users while administration stays separate", async () => {
+  const userId = "project-permission-owner";
+  const resource = await resourceFixture(userId);
+  const runtime = await seedRuntime(resource.appId, resource.deploymentId);
+  const foreign = owner("project-permission-foreign");
+  const anonymous = appRouter.createCaller({ userInfo: { user: null } });
+  const beforeHost = hostRequests.length;
+  for (const [caller, code] of [
+    [foreign, "NOT_FOUND"],
+    [anonymous, "UNAUTHORIZED"],
+  ] as const) {
+    await assert.rejects(
+      caller.project.deleteProject({ projectId: resource.projectId }),
+      { code },
+    );
+    await assert.rejects(
+      caller.project.retirementStatus({ projectId: resource.projectId }),
+      { code },
+    );
+  }
+  await assert.rejects(anonymous.project.retired(), { code: "UNAUTHORIZED" });
+  await assert.rejects(
+    owner(userId).admin.deleteResource({
+      resource: "containers",
+      id: runtime.id,
+    }),
+    { code: "FORBIDDEN" },
+  );
+  assert.equal(hostRequests.length, beforeHost);
+  assert.equal(
+    (await owner(userId).app.get({ appId: resource.appId })).resourceStatus,
+    "active",
+  );
+  await owner(userId).project.deleteProject({ projectId: resource.projectId });
+  await assert.rejects(
+    foreign.project.retirementStatus({ projectId: resource.projectId }),
+    { code: "NOT_FOUND" },
+  );
+  assert.deepEqual(await foreign.project.retired(), []);
+  assert.equal((await owner(userId).project.retired()).length, 1);
+});
+
+test(
+  "project retirement waits for every in-flight child and excludes queued ordinary, cleanup and publication work",
+  { timeout: 30000 },
+  async () => {
+    const userId = "project-in-flight-owner";
+    const caller = owner(userId);
+    const first = await resourceFixture(userId);
+    const second = await resourceFixture(userId);
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      first.projectId,
+      second.appId,
+    ]);
+    const unrelated = await resourceFixture("independent-project-owner");
+    await seedRuntime(first.appId, first.deploymentId);
+    const { createDeploymentExecutor } =
+      await import("../../worker/src/deployment/execute-deployment");
+    const { createDockerCommandAdapter } =
+      await import("../../worker/src/deployment/docker-command-adapter");
+    const { getDeployment, updateDeployment, saveDeploymentCleanup } =
+      await import("@repo/database/access-layer/deployment.dal");
+    const { createDeploymentLogs } =
+      await import("@repo/database/access-layer/deployment-logs.dal");
+    const publicationPersistence =
+      await import("@repo/database/access-layer/deployment-publication.dal");
+    const { withAppLifecycleLock } =
+      await import("@repo/database/access-layer/app-retirement.dal");
+    const { executeDeployment } =
+      await import("../../worker/src/deployment/production-executor");
+    const entered = gate();
+    const release = gate();
+    const persistence = {
+      getDeployment,
+      updateDeployment,
+      saveDeploymentCleanup,
+      createDeploymentLogs,
+      ...publicationPersistence,
+    };
+    await saveDeploymentCleanup(
+      first.deploymentId,
+      { status: "complete", artifacts: [] },
+      userId,
+    );
+    await publicationPersistence.recordPublication(
+      {
+        deploymentId: first.deploymentId,
+        imageId: "immutable-saved-image",
+        imageName: "ghcr.io/fixture/saved:1",
+      },
+      userId,
+    );
+    const execute = createDeploymentExecutor({
+      ...dockerFixture.dependencies,
+      ...persistence,
+      ...createDockerCommandAdapter({
+        ...persistence,
+        getDocker: dockerFixture.dependencies.getDocker,
+      }),
+      withAppLifecycleLock,
+      getCloneUrl: async () => {
+        entered.resolve();
+        await release.promise;
+        return "https://fixture.invalid/repo.git";
+      },
+    });
+    const running = execute({ userId, deploymentId: second.deploymentId });
+    await entered.promise;
+    const retiring = caller.project.deleteProject({
+      projectId: first.projectId,
+    });
+    const queued: Promise<unknown>[] = [];
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const waiting = await fixtures.query<{ count: number }>(
+          "SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND classid = 2121 AND objid = $1 AND NOT granted",
+          [second.appId],
+        );
+        if (waiting.rows[0]!.count) break;
+        assert.ok(
+          attempt < 200,
+          "project retirement must wait for the in-flight child",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      // No child or project becomes hidden until every app turn is acquired.
+      assert.equal(
+        (await caller.app.get({ appId: first.appId })).resourceStatus,
+        "active",
+      );
+      assert.equal(
+        (await caller.app.get({ appId: second.appId })).resourceStatus,
+        "active",
+      );
+      assert.ok(
+        (await caller.project.list()).some(
+          (project) => project.id === first.projectId,
+        ),
+      );
+      queued.push(execute({ userId, deploymentId: first.deploymentId }));
+      for (const operation of [
+        { action: "cleanup" },
+        { operation: "publish" },
+      ] as const)
+        queued.push(
+          executeDeployment({
+            ...operation,
+            userId,
+            deploymentId: first.deploymentId,
+          }),
+        );
+      for (const request of queued) void request.catch(() => {});
+      // A different project can finish while this project is waiting.
+      assert.equal(
+        (
+          await owner("independent-project-owner").project.deleteProject({
+            projectId: unrelated.projectId,
+          })
+        ).retirement?.status,
+        "complete",
+      );
+    } finally {
+      release.resolve();
+      await Promise.allSettled([running, retiring, ...queued]);
+    }
+    await running;
+    assert.equal((await retiring).retirement?.status, "complete");
+    for (const request of queued)
+      await assert.rejects(request, /(?:Deployment|Publication) not found/);
+    for (const resource of [first, second]) {
+      await assert.rejects(caller.app.get({ appId: resource.appId }), {
+        code: "NOT_FOUND",
+      });
+      await assert.rejects(caller.app.redeploy({ appId: resource.appId }), {
+        code: "NOT_FOUND",
+      });
+      const fresh = createDeploymentExecutor({
+        ...dockerFixture.dependencies,
+        ...persistence,
+        withAppLifecycleLock,
+      });
+      for (const operation of [
+        {},
+        { action: "cleanup" },
+        { operation: "publish" },
+      ] as const)
+        await assert.rejects(
+          fresh({ ...operation, userId, deploymentId: resource.deploymentId }),
+          /(?:Deployment|Publication) not found/,
+        );
+      const { GET } =
+        await import("../src/app/api/apps/[appId]/runtime-logs/route");
+      authenticatedUser = userId;
+      const beforeHost = hostRequests.length;
+      assert.equal(
+        (
+          await GET(
+            new Request(
+              `http://web.test/api/apps/${resource.appId}/runtime-logs`,
+            ),
+            { params: Promise.resolve({ appId: String(resource.appId) }) },
+          )
+        ).status,
+        404,
+      );
+      assert.equal(hostRequests.length, beforeHost);
+      await assert.rejects(
+        caller.deployment.deploy({
+          repoId: resource.repoId,
+          repo: "fixture",
+          owner: "fixture-owner",
+          branch: "release",
+          frameworkConfig: {
+            framework: "node",
+            rootDirectory: "./",
+            installCommand: "npm ci",
+            buildCommand: "npm run build",
+            startCommand: "node dist/server.js",
+            outputDirectory: "dist",
+            port: 3000,
+          },
+        }),
+        { code: "NOT_FOUND" },
+      );
+    }
+    assert.ok(
+      !(await dockerFixture.docker.listContainers({ all: true })).some((item) =>
+        [String(first.appId), String(second.appId)].includes(
+          item.Labels["nmt.app-id"]!,
+        ),
+      ),
+    );
+  },
+);
+
+test(
+  "mixed multi-app project and app retirement bursts converge without exhausting the query pool",
+  { timeout: 15000 },
+  async () => {
+    const userId = "project-concurrent-owner";
+    const caller = owner(userId);
+    const first = await resourceFixture(userId);
+    const second = await resourceFixture(userId);
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      first.projectId,
+      second.appId,
+    ]);
+    await Promise.all(
+      [first, second].map((resource) =>
+        seedRuntime(resource.appId, resource.deploymentId),
+      ),
+    );
+    await fixtures.query("SELECT pg_advisory_lock(2121, $1)", [second.appId]);
+    const requests = Array.from({ length: 12 }, () =>
+      caller.project.deleteProject({ projectId: first.projectId }),
+    );
+    const appRequest = caller.app.delete({ appId: first.appId });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      await fixtures.query("SELECT pg_advisory_unlock(2121, $1)", [
+        second.appId,
+      ]);
+    }
+    const results = await Promise.all(requests);
+    await appRequest;
+    assert.ok(
+      results.every(
+        (result) =>
+          result.resourceStatus === "inactive" &&
+          result.retirement?.status === "complete",
+      ),
+    );
+    const locks = await fixtures.query<{ count: number }>(
+      "SELECT count(*)::int FROM pg_locks WHERE locktype = 'advisory' AND ((classid = 2222 AND objid = $1) OR (classid = 2121 AND objid IN ($2, $3)))",
+      [first.projectId, first.appId, second.appId],
+    );
+    assert.equal(
+      locks.rows[0]!.count,
+      0,
+      "project and app sessions release every lifecycle lock",
+    );
+  },
+);
+
+test(
+  "a crashed project request leaves committed per-app recovery and a restarted request converges",
+  { timeout: 60000 },
+  async () => {
+    const userId = "project-crash-owner";
+    const caller = owner(userId);
+    const first = await resourceFixture(userId);
+    const second = await resourceFixture(userId);
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      first.projectId,
+      second.appId,
+    ]);
+    const runtime = await seedRuntime(first.appId, first.deploymentId);
+    await seedRuntime(second.appId, second.deploymentId);
+    const entered = gate();
+    const release = gate();
+    beforeRuntimeRemoval = async (id) => {
+      if (id === runtime.id) {
+        entered.resolve();
+        await release.promise;
+      }
+    };
+    const start = () =>
+      spawn(
+        process.execPath,
+        [
+          "--import",
+          "./tests/server-only.mjs",
+          "--import",
+          "tsx",
+          "tests/fixtures/project-retirement-request.mjs",
+          String(first.projectId),
+          userId,
+          "retry",
+        ],
+        {
+          cwd: fileURLToPath(new URL("../", import.meta.url)),
+          timeout: 20000,
+          env: {
+            ...process.env,
+            TSX_TSCONFIG_PATH: fileURLToPath(
+              new URL("../tsconfig.json", import.meta.url),
+            ),
+          },
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+    const child = start();
+    let errors = "";
+    child.stderr.on("data", (data) => {
+      errors += data;
+    });
+    const exit = new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", resolve);
+    });
+    try {
+      await Promise.race([
+        entered.promise,
+        exit.then(() => {
+          throw new Error(`Request exited before cleanup: ${errors}`);
+        }),
+      ]);
+      // Independent owner reads during host HTTP prove visibility/pending state
+      // committed first. A crash must never resurrect either child.
+      const visible = await caller.project.retirementStatus({
+        projectId: first.projectId,
+      });
+      assert.equal(visible.resourceStatus, "inactive");
+      assert.deepEqual(
+        visible.apps.map((app) => [app.resourceStatus, app.retirement?.status]),
+        [
+          ["inactive", "pending"],
+          ["inactive", "pending"],
+        ],
+      );
+      assert.equal(child.kill(), true);
+      await exit;
+    } finally {
+      child.kill();
+      release.resolve();
+      beforeRuntimeRemoval = undefined;
+    }
+    assert.equal(
+      (await caller.project.retirementStatus({ projectId: first.projectId }))
+        .retirement?.status,
+      "pending",
+    );
+    const restarted = start();
+    let output = "";
+    let restartErrors = "";
+    restarted.stdout.on("data", (data) => {
+      output += data;
+    });
+    restarted.stderr.on("data", (data) => {
+      restartErrors += data;
+    });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      restarted.once("error", reject);
+      restarted.once("exit", resolve);
+    });
+    assert.equal(code, 0, `${restartErrors}\n${output}`);
+    assert.equal(
+      JSON.parse(output.trim().split("\n").at(-1)!).retirement.status,
+      "complete",
+    );
+    assert.equal(
+      (await caller.project.retirementStatus({ projectId: first.projectId }))
+        .retirement?.status,
+      "complete",
+    );
+  },
+);
 
 test(
   "retirement waits for an in-flight execution and queued retries cannot restore it",
@@ -792,6 +1553,55 @@ test(
     );
     await assert.rejects(
       dockerFixture.docker.getContainer(runtime.id).inspect(),
+      { statusCode: 404 },
+    );
+    // A fresh project listing must retain discovery/retry after active cards
+    // disappear. Use real HTTP/tRPC and persisted per-app cleanup outcomes.
+    const pending = await resourceFixture(userId);
+    await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+      resource.projectId,
+      pending.appId,
+    ]);
+    const pendingRuntime = await seedRuntime(
+      pending.appId,
+      pending.deploymentId,
+    );
+    cleanupFailures[pendingRuntime.id] = "fixture-host-secret";
+    await owner(userId).project.deleteProject({
+      projectId: resource.projectId,
+    });
+    const { default: ProjectsPage } = await import("../src/app/projects/page");
+    await act(() =>
+      root.render(
+        h(
+          QueryClientProvider,
+          { client: queryClient },
+          h(
+            TRPCProvider,
+            { trpcClient: client, queryClient, children: null },
+            h(ProjectsPage),
+          ),
+        ),
+      ),
+    );
+    await waitFor(/Retired projects/);
+    await waitFor(/Runtime cleanup incomplete/);
+    const projectRetry = [
+      ...dom.window.document.querySelectorAll("button"),
+    ].find((button) => button.textContent === "Retry cleanup");
+    assert.ok(
+      projectRetry,
+      "retired projects must remain discoverable with owner recovery",
+    );
+    delete cleanupFailures[pendingRuntime.id];
+    await act(() =>
+      projectRetry.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true }),
+      ),
+    );
+    await waitFor(/Owned runtime cleanup complete for every app/);
+    await assert.rejects(
+      dockerFixture.docker.getContainer(pendingRuntime.id).inspect(),
       { statusCode: 404 },
     );
   },

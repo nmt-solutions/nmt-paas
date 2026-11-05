@@ -7,6 +7,7 @@ const result = spawnSync(
   [
     "tests/run-auth-workflows.mjs",
     "--experimental-test-module-mocks",
+    ...process.argv.slice(2),
     "tests/app-retirement-workflows.test.ts",
   ],
   {
