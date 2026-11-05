@@ -27,6 +27,8 @@ export async function deploymentFixture({
     head: string;
     commits: Record<string, string>;
     cloneUrl?: string;
+    environmentKeys?: { install: string; build: string; runtime: string };
+    files?: Record<string, string>;
   };
   failStart?: string;
   failCreate?: string;
@@ -65,6 +67,9 @@ export async function deploymentFixture({
       changes: string[];
       artifact?: string;
       labels?: Record<string, string>;
+      publicAsset?: string;
+      files: Record<string, string>;
+      environment: string[];
     }
   >();
   const execs = new Map<
@@ -74,6 +79,15 @@ export async function deploymentFixture({
   let revision: string | undefined;
   let installed = false;
   let artifact: string | undefined;
+  let publicAsset: string | undefined;
+  const files: Record<string, string> = {};
+  const environment = (entries: string[] = []) =>
+    Object.fromEntries(
+      entries.map((entry) => {
+        const separator = entry.indexOf("=");
+        return [entry.slice(0, separator), entry.slice(separator + 1)];
+      }),
+    );
   const sockets = new Set<Socket>();
   const server = createServer(async (request, response) => {
     const url = new URL(request.url!, "http://fixture");
@@ -121,11 +135,33 @@ export async function deploymentFixture({
     if (execMatch) {
       const id = `exec-${execs.size}`;
       const command = body.Cmd[0] === "sh" ? body.Cmd[2] : body.Cmd.join(" ");
-      let exitCode = body.Cmd[2] === failCommand ? 1 : 0;
+      let exitCode = command === failCommand ? 1 : 0;
       let output: string | undefined;
+      const workDir =
+        body.WorkingDir || configurations.get(execMatch[1]!)?.WorkingDir;
+      if (command.startsWith("git clone ")) {
+        const cloneUrl = command.slice("git clone ".length).split(" ")[0];
+        files["/app/.git/config"] = `[remote "origin"]\nurl = ${cloneUrl}`;
+        files["/app/.git/logs/HEAD"] = `clone: from ${cloneUrl}`;
+        Object.assign(files, source?.files);
+      } else if (command.startsWith("cat > .env")) {
+        files[`${workDir}/.env`] = command.split("\n").slice(1, -1).join("\n");
+      } else if (body.Cmd[0] === "rm") {
+        const targets: string[] = body.Cmd.slice(1).filter(
+          (arg: string) => !arg.startsWith("-"),
+        );
+        if (exitCode === 0) {
+          for (const path of Object.keys(files)) {
+            if (
+              targets.some(
+                (target) => path === target || path.startsWith(`${target}/`),
+              )
+            )
+              delete files[path];
+          }
+        }
+      }
       if (source) {
-        const workDir =
-          body.WorkingDir || configurations.get(execMatch[1]!)?.WorkingDir;
         if (command.startsWith("git clone ")) {
           const cloneUrl = new URL(
             command.slice("git clone ".length).split(" ")[0],
@@ -151,12 +187,34 @@ export async function deploymentFixture({
             exitCode = 1;
             output = "package.json not found in working directory";
           }
+          if (source.environmentKeys) {
+            const value = environment(body.Env)[source.environmentKeys.install];
+            if (value === undefined) {
+              exitCode = 1;
+              output = "Install configuration missing";
+            } else output = `Install configuration: ${value}`;
+          }
+          if (exitCode === 0)
+            files[`${workDir}/node_modules/fixture-dependency/index.js`] =
+              "module.exports = 'fixture dependency';";
         } else if (command === "npm run build") {
           if (workDir === source.rootDirectory && installed && revision)
             artifact = source.commits[revision];
           else {
             exitCode = 1;
             output = "build dependencies not found in working directory";
+          }
+          if (source.environmentKeys) {
+            publicAsset = environment(body.Env)[source.environmentKeys.build];
+            if (publicAsset === undefined) {
+              exitCode = 1;
+              output = "Build configuration missing";
+            } else output = `Build configuration: ${publicAsset}`;
+          }
+          if (exitCode === 0) {
+            files[`${workDir}/dist/server.js`] = `// release: ${artifact}`;
+            if (publicAsset !== undefined)
+              files[`${workDir}/dist/public.txt`] = publicAsset;
           }
         }
       }
@@ -186,6 +244,10 @@ export async function deploymentFixture({
               .map((change) => change.slice(6).split("=")),
           ),
         },
+        publicAsset,
+        files: { ...files },
+        environment:
+          configurations.get(url.searchParams.get("container")!)?.Env ?? [],
       });
       return send(201, { Id: "fixture-image" });
     }
@@ -242,7 +304,9 @@ export async function deploymentFixture({
         if (source && !id.startsWith("builder-")) {
           if (
             config?.WorkingDir !== source.rootDirectory ||
-            !images.get(config.Image!)?.artifact
+            !images.get(config.Image!)?.files[
+              `${config.WorkingDir}/dist/server.js`
+            ]
           ) {
             return send(400, {
               message: `Application artifact not found in ${config?.WorkingDir}`,
@@ -266,7 +330,16 @@ export async function deploymentFixture({
           "Content-Type": "application/vnd.docker.raw-stream",
         });
         const config = configurations.get(id);
-        const output = config ? images.get(config.Image!)?.artifact : undefined;
+        const image = config ? images.get(config.Image!) : undefined;
+        const output = source?.environmentKeys
+          ? JSON.stringify({
+              release: image?.artifact,
+              publicAsset: image?.publicAsset,
+              runtimeValue: environment(config?.Env)[
+                source.environmentKeys.runtime
+              ],
+            })
+          : image?.artifact;
         if (output) {
           const payload = Buffer.from(`${output}\n`);
           const header = Buffer.alloc(8);
@@ -359,7 +432,7 @@ export async function deploymentFixture({
       getDocker: async () => docker,
     }),
     getCloneUrl: async () => "https://fixture.invalid/repo.git",
-    fetchEnvVars: async () => "FIXTURE_VALUE=local-only",
+    fetchEnvVars: async () => [{ key: "FIXTURE_VALUE", value: "local-only" }],
     registry: { username: "Fixture", password: "fixture-pat" },
   };
 

@@ -20,9 +20,10 @@ log storage. Tests inject fixture adapters at these external boundaries.
   deployment success state/log were saved and replacement retirement finished.
   It does not establish application
   readiness or a zero-downtime guarantee.
-- Execution preserves clone, recorded-commit checkout, install, environment-file
-  creation, build, image commit, and runtime start behavior. It retains the
-  process-local serialization of deployments for the same app. All callers of
+- Execution preserves clone, recorded-commit checkout, install, build, image
+  commit, and runtime start behavior. Saved configuration reaches install/build
+  and runtime through process environments; repository metadata is removed before
+  commit. It retains process-local serialization of deployments for the same app. All callers of
   that process must share the executor instance.
 - Before runtime start, failure attempts to persist `failed` and its scrubbed diagnostic,
   then rejects with a sanitized error. Failure-reporting errors do not hide that
@@ -42,14 +43,14 @@ log storage. Tests inject fixture adapters at these external boundaries.
 
 The [retry recovery increment](deployment-retry-recovery.md) reconciles identified
 artifacts on repeated deliveries and after post-start persistence failure.
-Separate persisted publication/cleanup outcomes and credential-file hardening
-remain later work.
+Separate persisted publication/cleanup outcomes remain later work.
 Builder preparation now registers acquired containers inside execution's failure
 cleanup scope; failed attempts also release their committed image and save
 independent cleanup diagnostics. See [failed deployment cleanup](failed-deployment-cleanup.md)
 for ownership, failure behavior, checks, and recovery limits. Ticket #10's
 [stable repository lookup and consistent startup working directories](deployment-repository-context.md)
 remain in effect.
+Ticket #16 documents [environment delivery and image credential removal](deployment-environment-credentials.md).
 
 ## Checks and operational use
 
