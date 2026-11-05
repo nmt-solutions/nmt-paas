@@ -24,19 +24,28 @@ export async function GET(
   const deployment = await getAppLatestDeployment(appId, user.id);
   if (!deployment) return new Response("Deployment not found", { status: 404 });
 
+  const upstream = new AbortController();
+  let finished = false;
+  const abort = () => upstream.abort(request.signal.reason);
+  if (request.signal.aborted) abort();
+  else request.signal.addEventListener("abort", abort, { once: true });
+  const detach = () => request.signal.removeEventListener("abort", abort);
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       void cpApiClient
         .streamRuntimeLogs(
           deployment.id,
-          (log) =>
+          (log) => {
+            if (finished || upstream.signal.aborted) return;
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify(log)}\n\n`),
-            ),
-          request.signal,
+            );
+          },
+          upstream.signal,
         )
         .catch((error: unknown) => {
-          if (request.signal.aborted) return;
+          if (finished || upstream.signal.aborted) return;
           console.error("Failed to proxy runtime logs", error);
           controller.enqueue(
             encoder.encode(
@@ -44,7 +53,17 @@ export async function GET(
             ),
           );
         })
-        .finally(() => controller.close());
+        .finally(() => {
+          detach();
+          if (finished) return;
+          finished = true;
+          controller.close();
+        });
+    },
+    cancel() {
+      finished = true;
+      detach();
+      upstream.abort();
     },
   });
 

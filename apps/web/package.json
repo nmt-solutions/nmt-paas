@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit",
-    "test:auth": "node tests/run-auth-workflows.mjs"
+    "test:auth": "node tests/run-auth-workflows.mjs",
+    "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
