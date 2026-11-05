@@ -19,6 +19,7 @@
     "check-types": "tsc --noEmit",
     "test:diagnostics": "node --import tsx --experimental-test-module-mocks --test tests/deployment-diagnostics.test.mjs",
     "test:repository": "node --import tsx --experimental-test-module-mocks --test tests/deployment-repository.test.mjs",
+    "test:failures": "node --import tsx --test tests/deployment-failures.test.mjs",
     "test": "node --import tsx --test test/*.test.ts",
     "test:docker": "node --import tsx --test test/docker.smoke.ts",
     "check-types:test": "tsc -p tsconfig.test.json"

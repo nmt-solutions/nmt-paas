@@ -12,6 +12,12 @@ export const userId = "fixture-owner";
 export async function deploymentFixture({
   failCommand,
   source,
+  failStart,
+  failCreate,
+  failPull = false,
+  failCommit = false,
+  failRemove = {},
+  disappearOnRemove = [],
 }: {
   failCommand?: string;
   source?: {
@@ -20,6 +26,12 @@ export async function deploymentFixture({
     commits: Record<string, string>;
     cloneUrl?: string;
   };
+  failStart?: string;
+  failCreate?: string;
+  failPull?: boolean;
+  failCommit?: boolean;
+  failRemove?: Record<string, string>;
+  disappearOnRemove?: string[];
 } = {}) {
   const containers = new Map([
     [
@@ -42,7 +54,10 @@ export async function deploymentFixture({
     ],
   ]);
   const configurations = new Map<string, Docker.ContainerCreateOptions>();
-  const images = new Map<string, { changes: string[]; artifact?: string }>();
+  const images = new Map<
+    string,
+    { id: string; changes: string[]; artifact?: string }
+  >();
   const execs = new Map<
     string,
     { command: string[]; exitCode: number; output?: string }
@@ -69,6 +84,10 @@ export async function deploymentFixture({
           .find((change) => change.startsWith("WORKDIR "))
           ?.slice(8);
       }
+      if (containers.has(name))
+        return send(409, { message: "Container name already in use" });
+      if (name === failCreate)
+        return send(500, { message: "fixture create rejected" });
       containers.set(name, {
         Id: name,
         Names: [`/${name}`],
@@ -81,6 +100,7 @@ export async function deploymentFixture({
     if (url.pathname === "/containers/json")
       return send(200, [...containers.values()]);
     if (url.pathname === "/images/create") {
+      if (failPull) return send(500, { message: "fixture pull rejected" });
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end('{"status":"Download complete"}\n');
       return;
@@ -139,12 +159,31 @@ export async function deploymentFixture({
     if (inspectExec)
       return send(200, { ExitCode: execs.get(inspectExec[1]!)?.exitCode });
     if (url.pathname === "/commit") {
+      if (failCommit) return send(500, { message: "fixture commit rejected" });
       const name = `${url.searchParams.get("repo")}:${url.searchParams.get("tag")}`;
       images.set(name, {
+        id: "fixture-image",
         changes: url.searchParams.getAll("changes"),
         artifact,
       });
       return send(201, { Id: "fixture-image" });
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/images/")) {
+      const id = decodeURIComponent(url.pathname.slice("/images/".length));
+      if (failRemove[id]) return send(500, { message: failRemove[id] });
+      const matches = [...images.entries()].filter(
+        ([name, image]) => name === id || image.id === id,
+      );
+      if (matches.length > 1 && url.searchParams.get("force") !== "true")
+        return send(409, {
+          message: "Image referenced by multiple repositories",
+        });
+      const image = matches[0];
+      if (!image) return send(404, { message: "No such image" });
+      for (const [name] of matches) images.delete(name);
+      if (disappearOnRemove.includes(id))
+        return send(404, { message: "No such image" });
+      return send(200, [{ Deleted: image[1].id }]);
     }
     if (url.pathname.startsWith("/images/") && url.pathname.endsWith("/push")) {
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -159,10 +198,15 @@ export async function deploymentFixture({
       const container = containers.get(id);
       if (!container) return send(404, { message: "No such container" });
       if (request.method === "DELETE") {
+        if (failRemove[id]) return send(500, { message: failRemove[id] });
         containers.delete(id);
+        if (disappearOnRemove.includes(id))
+          return send(404, { message: "No such container" });
         return send(204);
       }
       if (match[2] === "start") {
+        if (id === failStart)
+          return send(500, { message: "fixture start rejected" });
         const config = configurations.get(id);
         if (source && !id.startsWith("builder-")) {
           if (
