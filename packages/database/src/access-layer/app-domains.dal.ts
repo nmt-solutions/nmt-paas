@@ -13,6 +13,7 @@ export const createAppDomains = async (
   appId: number,
   appName: string,
   userId: string,
+  connection: Pick<typeof database, "query" | "insert"> = database,
 ) => {
   let newDomainNames = {
     production: `${appName}.${env.variables.BASE_DOMAIN}`,
@@ -20,14 +21,14 @@ export const createAppDomains = async (
   };
 
   while (true) {
-    const existingAppDomains = await database.query.AppDomains.findFirst({
+    const existingAppDomains = await connection.query.AppDomains.findFirst({
       where: {
         domain: { OR: [newDomainNames.production, newDomainNames.preview] },
       },
     });
 
     if (!existingAppDomains) {
-      const appDomains = await database
+      const appDomains = await connection
         .insert(AppDomains)
         .values([
           {

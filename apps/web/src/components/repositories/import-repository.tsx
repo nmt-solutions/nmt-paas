@@ -171,6 +171,7 @@ const ImportRepository = ({
         repoId: parseInt(repoId),
         repo,
         owner: data?.repository.owner.name ?? "",
+        projectName,
         branch,
         envVars: envVarsArray,
         frameworkConfig: {
