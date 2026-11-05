@@ -1,10 +1,12 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { APIHandler } from "../../../models/api-handler.model.js";
 import { docker, getDeploymentContainer } from "../../../docker/docker.js";
 
 const streamLogs = async (
   deploymentId: number,
   onLog: (line: string) => void,
+  onEnd: () => void,
+  signal: AbortSignal,
 ): Promise<() => void> => {
   const container = getDeploymentContainer(deploymentId);
 
@@ -14,7 +16,16 @@ const streamLogs = async (
     stderr: true,
     timestamps: true,
     tail: 100,
+    abortSignal: signal,
   });
+
+  if (!(stream instanceof Readable)) {
+    throw new Error("Docker did not return a readable log stream.");
+  }
+  if (signal.aborted) {
+    stream.destroy();
+    return () => {};
+  }
 
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -33,17 +44,21 @@ const streamLogs = async (
   docker.modem.demuxStream(stream, stdout, stderr);
 
   const close = () => {
-    // stream.destroy();
+    stream.destroy();
     stdout.destroy();
     stderr.destroy();
   };
 
   stream.on("error", (error) => {
+    if (signal.aborted) return;
     console.error(
       `Docker log stream error for deployment ${deploymentId}:`,
       error,
     );
+    onEnd();
   });
+  stream.once("end", onEnd);
+  stream.once("close", onEnd);
 
   return close;
 };
@@ -78,16 +93,41 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
   res.write(": connected\n\n");
 
   let closeStream: (() => void) | undefined;
+  let closed = false;
+  const upstream = new AbortController();
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(": heartbeat\n\n");
+    }
+  }, 15_000);
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    res.off("close", cleanup);
+    upstream.abort();
+    closeStream?.();
+    if (!res.writableEnded) res.end();
+  };
+  res.once("close", cleanup);
 
   try {
-    closeStream = await streamLogs(deploymentId, (line) => {
-      if (res.writableEnded) {
-        return;
-      }
+    closeStream = await streamLogs(
+      deploymentId,
+      (line) => {
+        if (res.writableEnded) {
+          return;
+        }
 
-      res.write(`data: ${JSON.stringify(line)}\n\n`);
-    });
+        res.write(`data: ${JSON.stringify(line)}\n\n`);
+      },
+      cleanup,
+      upstream.signal,
+    );
+    if (closed) closeStream();
   } catch (error) {
+    if (closed) return;
     console.error(
       `Failed to stream logs for deployment ${deploymentId}:`,
       error,
@@ -99,27 +139,8 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
           message: "Failed to read deployment logs.",
         })}\n\n`,
       );
-
-      res.end();
     }
-
+    cleanup();
     return;
   }
-
-  const heartbeat = setInterval(() => {
-    if (!res.writableEnded) {
-      res.write(": heartbeat\n\n");
-    }
-  }, 15_000);
-
-  const cleanup = () => {
-    clearInterval(heartbeat);
-    closeStream?.();
-
-    if (!res.writableEnded) {
-      res.end();
-    }
-  };
-
-  req.on("close", cleanup);
 };

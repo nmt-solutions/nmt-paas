@@ -1,5 +1,5 @@
 import { initTRPC, TRPCError } from "@trpc/server";
-import { type UserInfo, withAuth } from "@workos-inc/authkit-nextjs";
+import { withAuth } from "@workos-inc/authkit-nextjs";
 import superjson from "superjson";
 
 /**
@@ -36,13 +36,13 @@ export const authenticatedProcedure = t.procedure.use(async (opts) => {
     ctx: { userInfo },
   } = opts;
 
-  if (!userInfo) {
+  if (!userInfo?.user) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
 
   return opts.next({
     ...opts,
-    ctx: { ...opts.ctx, userInfo: opts.ctx.userInfo as UserInfo },
+    ctx: { ...opts.ctx, userInfo },
   });
 });
 

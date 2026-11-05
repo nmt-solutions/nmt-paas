@@ -91,42 +91,49 @@ export class ControlPanelAPIClient {
 
     let buffer = "";
 
-    while (true) {
-      const { value, done } = await reader.read();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
 
-      if (done) {
-        break;
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, {
+          stream: true,
+        });
+
+        const events = buffer.split("\n\n");
+
+        buffer = events.pop() ?? "";
+
+        for (const event of events) {
+          const dataLine = event
+            .split("\n")
+            .find((line) => line.startsWith("data:"));
+
+          if (!dataLine) {
+            continue;
+          }
+
+          const data = dataLine.slice("data:".length).trim();
+
+          if (!data) {
+            continue;
+          }
+
+          try {
+            onLog(JSON.parse(data));
+          } catch {
+            onLog(data);
+          }
+        }
       }
-
-      buffer += decoder.decode(value, {
-        stream: true,
-      });
-
-      const events = buffer.split("\n\n");
-
-      buffer = events.pop() ?? "";
-
-      for (const event of events) {
-        const dataLine = event
-          .split("\n")
-          .find((line) => line.startsWith("data:"));
-
-        if (!dataLine) {
-          continue;
-        }
-
-        const data = dataLine.slice("data:".length).trim();
-
-        if (!data) {
-          continue;
-        }
-
-        try {
-          onLog(JSON.parse(data));
-        } catch {
-          onLog(data);
-        }
-      }
+    } finally {
+      // A consumer can stop before EOF (for example after its response closes).
+      // Cancel the body even without a caller-supplied AbortSignal.
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
   }
 
