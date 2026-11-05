@@ -172,3 +172,393 @@ test(
     );
   },
 );
+
+test("a subdirectory app installs, builds and starts the recorded revision instead of the branch head", async (t) => {
+  const fixture = await deploymentFixture({
+    source: {
+      rootDirectory: "/app/services/api",
+      head: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      commits: {
+        "1234567890abcdef1234567890abcdef12345678": "recorded-release",
+        eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: "newer-branch-head",
+      },
+    },
+  });
+  t.after(fixture.close);
+  const deployment = await fixture.database.getDeployment(deploymentId);
+  assert.ok(deployment);
+  deployment.app.frameworkConfig.rootDirectory = "./services/api";
+
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  const runtime = await fixture.docker.getContainer("deployment-42").inspect();
+  assert.equal(runtime.State.Running, true);
+  assert.equal(runtime.Config.WorkingDir, "/app/services/api");
+  assert.equal(
+    fixture.images.get("ghcr.io/fixture/42:42")?.artifact,
+    "recorded-release",
+  );
+  const output = await fixture.docker
+    .getContainer("deployment-42")
+    .logs({ stdout: true, stderr: true });
+  assert.match(output.toString(), /recorded-release/);
+  assert.ok(!output.toString().includes("newer-branch-head"));
+});
+
+test("an unavailable recorded commit fails checkout and preserves the previous runtime", async (t) => {
+  const fixture = await deploymentFixture({
+    source: {
+      rootDirectory: "/app",
+      head: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      commits: { eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee: "branch-head" },
+    },
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Checkout commit failed \(exit code 128\)/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(logs, /recorded commit is not available/);
+  assert.ok(!logs.includes("Installing project dependencies"));
+  assert.equal(fixture.images.size, 0);
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
+
+test("failed builder preparation releases the acquired builder and records the failed attempt", async (t) => {
+  const fixture = await deploymentFixture({
+    failCommand: "apk add --no-cache git docker-cli bash",
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Prepare builder failed \(exit code 1\)/,
+  );
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)!.message,
+    /Prepare builder failed \(exit code 1\)/,
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+  assert.equal(fixture.images.size, 0);
+});
+
+test("a replacement that cannot start releases its container and image while preserving the previous runtime", async (t) => {
+  const fixture = await deploymentFixture({ failStart: "deployment-42" });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Start application: .*fixture start rejected/,
+  );
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)!.message,
+    /fixture start rejected/,
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+  assert.equal(
+    fixture.images.size,
+    0,
+    "the failed replacement image must be removed",
+  );
+});
+
+test("cleanup failures are saved separately without hiding the original start failure or stopping other cleanup", async (t) => {
+  const fixture = await deploymentFixture({
+    failStart: "deployment-42",
+    failRemove: {
+      "deployment-42": "container removal denied fixture-pat",
+      "fixture-image": "image removal denied fixture-pat",
+    },
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /fixture start rejected/);
+      assert.doesNotMatch(error.message, /removal denied|fixture-pat/);
+      return true;
+    },
+  );
+
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(
+    logs,
+    /Cleanup failed for runtime .*container removal denied \[REDACTED\]/,
+  );
+  assert.match(
+    logs,
+    /Cleanup failed for image .*image removal denied \[REDACTED\]/,
+  );
+  assert.doesNotMatch(logs, /fixture-pat/);
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)!.message,
+    /fixture start rejected/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["deployment-42", "previous", "unrelated"],
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+  assert.equal(fixture.images.size, 1);
+});
+
+test("a builder that cannot start records a preparation failure and releases the acquired container", async (t) => {
+  const fixture = await deploymentFixture({ failStart: "builder-42" });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Prepare builder: .*fixture start rejected/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)!.message,
+    /Prepare builder: .*fixture start rejected/,
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+});
+
+test("an already absent builder counts as cleaned up without adding a cleanup failure", async (t) => {
+  const fixture = await deploymentFixture({
+    failStart: "builder-42",
+    disappearOnRemove: ["builder-42"],
+  });
+  t.after(fixture.close);
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Prepare builder/,
+  );
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.doesNotMatch(logs, /Cleanup failed/);
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
+  );
+});
+
+for (const scenario of [
+  {
+    name: "base image pull",
+    options: { failPull: true },
+    diagnostic: /Prepare builder: .*fixture pull rejected/,
+  },
+  {
+    name: "builder creation",
+    options: { failCreate: "builder-42" },
+    diagnostic: /Prepare builder: .*fixture create rejected/,
+  },
+  {
+    name: "installation",
+    options: { failCommand: "npm ci" },
+    diagnostic: /Install dependencies failed \(exit code 1\)/,
+  },
+  {
+    name: "image commit",
+    options: { failCommit: true },
+    diagnostic: /fixture commit rejected/,
+  },
+  {
+    name: "runtime creation",
+    options: { failCreate: "deployment-42" },
+    diagnostic: /fixture create rejected/,
+  },
+]) {
+  test(`a failed ${scenario.name} preserves unrelated resources and records a failed attempt`, async (t) => {
+    const fixture = await deploymentFixture(scenario.options);
+    t.after(fixture.close);
+    // A committed image belonging to another app must survive every failure.
+    fixture.images.set("ghcr.io/other/runtime:stable", {
+      id: "unrelated-image",
+      changes: [],
+    });
+    await assert.rejects(
+      createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+      scenario.diagnostic,
+    );
+    assert.equal(
+      (await fixture.database.getDeployment(deploymentId))?.status,
+      "failed",
+    );
+    assert.match(
+      (await fixture.database.getLogs(deploymentId)).at(-1)!.message,
+      scenario.diagnostic,
+    );
+    assert.deepEqual(
+      (await fixture.docker.listContainers({ all: true }))
+        .map((container) => container.Id)
+        .sort(),
+      ["previous", "unrelated"],
+    );
+    assert.equal(
+      (await fixture.docker.getContainer("previous").inspect()).State.Running,
+      true,
+    );
+    assert.deepEqual(
+      [...fixture.images.keys()],
+      ["ghcr.io/other/runtime:stable"],
+    );
+  });
+}
+
+test("builder acquisition conflict preserves the container this attempt did not create", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  await fixture.docker.createContainer({
+    name: "builder-42",
+    Image: "another-image",
+  });
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Prepare builder: .*Container name already in use/,
+  );
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("builder-42").inspect()).Config.Image,
+    "another-image",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
+
+test("failed builder cleanup is visible alongside the preparation failure", async (t) => {
+  const fixture = await deploymentFixture({
+    failCommand: "apk add --no-cache git docker-cli bash",
+    failRemove: { "builder-42": "builder removal denied fixture-pat" },
+  });
+  t.after(fixture.close);
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Prepare builder failed \(exit code 1\)/,
+  );
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(
+    logs,
+    /Cleanup failed for builder builder-42: .*builder removal denied \[REDACTED\]/,
+  );
+  assert.match(logs, /Prepare builder failed \(exit code 1\)/);
+  assert.doesNotMatch(logs, /fixture-pat/);
+  assert.equal(
+    (await fixture.docker.getContainer("builder-42").inspect()).State.Running,
+    true,
+  );
+});
+
+test("failed-image cleanup preserves another app's tag when Docker reports shared image ownership", async (t) => {
+  const fixture = await deploymentFixture({ failStart: "deployment-42" });
+  t.after(fixture.close);
+  fixture.images.set("ghcr.io/other/runtime:stable", {
+    id: "fixture-image",
+    changes: [],
+  });
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Start application/,
+  );
+
+  assert.deepEqual([...fixture.images.keys()].sort(), [
+    "ghcr.io/fixture/42:42",
+    "ghcr.io/other/runtime:stable",
+  ]);
+  const logs = (await fixture.database.getLogs(deploymentId))
+    .map((log) => log.message)
+    .join("\n");
+  assert.match(
+    logs,
+    /Cleanup failed for image fixture-image: .*Image referenced by multiple repositories/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
