@@ -11,6 +11,7 @@ const retirementSelection = {
       columns: {
         id: true,
         appName: true,
+        createdBy: true,
         resourceStatus: true,
         retirement: true,
       },

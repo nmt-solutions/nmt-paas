@@ -405,6 +405,13 @@ test("project retirement atomically hides every child and preserves another owne
     await assert.rejects(caller.app.get({ appId: resource.appId }), {
       code: "NOT_FOUND",
     });
+    await assert.rejects(
+      caller.app.deploymentLogs({
+        appId: resource.appId,
+        deploymentId: resource.deploymentId,
+      }),
+      { code: "NOT_FOUND" },
+    );
     await assert.rejects(caller.app.redeploy({ appId: resource.appId }), {
       code: "NOT_FOUND",
     });
@@ -475,6 +482,49 @@ test("legacy inactive projects recover missing child retirement state and empty 
     retired,
   );
   assert.equal(hostRequests.length, beforeHost);
+});
+
+test("project ownership cannot reveal a foreign child's outcome or grant runtime cleanup authority", async () => {
+  const userId = "project-mismatched-owner";
+  const caller = owner(userId);
+  const own = await resourceFixture(userId);
+  const foreign = await resourceFixture("project-mismatched-foreign");
+  await fixtures.query(`UPDATE "Apps" SET "projectId" = $1 WHERE id = $2`, [
+    own.projectId,
+    foreign.appId,
+  ]);
+  const runtime = await seedRuntime(foreign.appId, foreign.deploymentId);
+  assert.deepEqual(
+    (
+      await caller.project.retirementStatus({ projectId: own.projectId })
+    ).apps.map((app) => app.id),
+    [own.appId],
+  );
+  const beforeHost = hostRequests.length;
+  const result = await caller.project.deleteProject({
+    projectId: own.projectId,
+  });
+  assert.equal(
+    result.retirement?.status,
+    "pending",
+    "unverified foreign cleanup must never be reported complete",
+  );
+  assert.deepEqual(
+    result.apps.map((app) => app.id),
+    [own.appId],
+  );
+  assert.deepEqual(hostRequests.slice(beforeHost), [
+    `POST /apps/${own.appId}/retire`,
+  ]);
+  assert.equal(
+    (await dockerFixture.docker.getContainer(runtime.id).inspect()).State
+      .Running,
+    true,
+  );
+  assert.deepEqual(
+    (await caller.project.retired())[0]!.apps.map((app) => app.id),
+    [own.appId],
+  );
 });
 
 test(
@@ -605,6 +655,14 @@ test("every project visibility failure including commit rolls back all apps befo
       caller.app.get({ appId: resource.appId }),
     ),
   );
+  const beforeHistory = await Promise.all(
+    [first, second].map((resource) =>
+      caller.app.deploymentLogs({
+        appId: resource.appId,
+        deploymentId: resource.deploymentId,
+      }),
+    ),
+  );
   for (const fault of [
     "Projects",
     "Apps",
@@ -655,6 +713,18 @@ test("every project visibility failure including commit rolls back all apps befo
       ),
       beforeApps,
       `${fault}: all existing app/domain/deployment values survive`,
+    );
+    assert.deepEqual(
+      await Promise.all(
+        [first, second].map((resource) =>
+          caller.app.deploymentLogs({
+            appId: resource.appId,
+            deploymentId: resource.deploymentId,
+          }),
+        ),
+      ),
+      beforeHistory,
+      `${fault}: selected history remains unchanged`,
     );
     assert.equal(
       (await caller.project.retirementStatus({ projectId: first.projectId }))

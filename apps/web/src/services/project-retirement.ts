@@ -8,6 +8,7 @@ import {
 
 function outcome(
   project: NonNullable<Awaited<ReturnType<typeof getOwnedProjectRetirement>>>,
+  userId: string,
 ) {
   const complete = project.apps.every(
     (app) =>
@@ -16,6 +17,16 @@ function outcome(
   );
   return {
     ...project,
+    // A manually linked foreign child cannot grant access through its parent.
+    // Keep it in the completion check, but never expose its identity/outcome.
+    apps: project.apps
+      .filter((app) => app.createdBy === userId)
+      .map((app) => ({
+        id: app.id,
+        appName: app.appName,
+        resourceStatus: app.resourceStatus,
+        retirement: app.retirement,
+      })),
     retirement:
       project.resourceStatus === "active"
         ? null
@@ -29,7 +40,9 @@ function outcome(
 }
 
 export async function retiredProjects(userId: string) {
-  return (await getOwnedRetiredProjects(userId)).map(outcome);
+  return (await getOwnedRetiredProjects(userId)).map((project) =>
+    outcome(project, userId),
+  );
 }
 
 export async function projectRetirementStatus(
@@ -39,7 +52,7 @@ export async function projectRetirementStatus(
   const project = await getOwnedProjectRetirement(projectId, userId);
   if (!project)
     throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
-  return outcome(project);
+  return outcome(project, userId);
 }
 
 export async function retireProject(projectId: number, userId: string) {
