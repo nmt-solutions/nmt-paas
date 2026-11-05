@@ -1087,30 +1087,34 @@ export const createDeploymentExecutor = ({
       }
       const attempt = async () => {
         if (action === "cleanup") {
-          // Read after taking the lock so recovery never overwrites a newer
-          // attempt's ledger. This mode performs no build/start/status writes.
-          const current = await getDeployment(deploymentId);
-          if (!current || current.userId !== userId)
-            throw new Error("Deployment not found for cleanup owner");
-          if (!current.cleanup)
-            throw new Error(
-              "No recorded cleanup; recover deployment execution before retrying cleanup",
+          try {
+            // Read after taking the lock so recovery never overwrites a newer
+            // attempt's ledger. This mode performs no build/start/status writes.
+            const current = await getDeployment(deploymentId);
+            if (!current || current.userId !== userId)
+              throw new Error("Deployment not found for cleanup owner");
+            if (!current.cleanup)
+              throw new Error(
+                "No recorded cleanup; recover deployment execution before retrying cleanup",
+              );
+            const cleanup = await cleanupArtifacts(
+              await getCleanupDocker(),
+              current,
+              deploymentId,
+              userId,
             );
-          const cleanup = await cleanupArtifacts(
-            await getCleanupDocker(),
-            current,
-            deploymentId,
-            userId,
-          );
-          await createDeploymentLogs({
-            deploymentId,
-            createdBy: userId,
-            message:
-              cleanup.status === "complete"
-                ? "Cleanup complete. Runtime-start outcome unchanged."
-                : "Cleanup incomplete; retry cleanup after resolving the removal error. Runtime-start outcome unchanged.",
-          });
-          return cleanup;
+            await createDeploymentLogs({
+              deploymentId,
+              createdBy: userId,
+              message:
+                cleanup.status === "complete"
+                  ? "Cleanup complete. Runtime-start outcome unchanged."
+                  : "Cleanup incomplete; retry cleanup after resolving the removal error. Runtime-start outcome unchanged.",
+            });
+            return cleanup;
+          } catch (failure) {
+            throw safeDiagnosticError(failure);
+          }
         }
         let runtimeStarted = false;
         try {

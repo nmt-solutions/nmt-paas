@@ -299,3 +299,33 @@ test("an adopted current runtime remains protected when it stops before cleanup 
     "success",
   );
 });
+
+test("cleanup adapter failures return a redacted error without changing successful execution", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+  const failure = Object.assign(new Error("Docker unavailable fixture-pat"), {
+    cause: { password: "fixture-pat" },
+  });
+  await assert.rejects(
+    createDeploymentExecutor({
+      ...fixture.dependencies,
+      getCleanupDocker: async () => {
+        throw failure;
+      },
+    })({ userId, deploymentId, action: "cleanup" }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "Docker unavailable [REDACTED]");
+      assert.equal("cause" in error, false);
+      return true;
+    },
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+});
