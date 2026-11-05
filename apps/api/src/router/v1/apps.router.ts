@@ -76,15 +76,13 @@ appsRouter.post("/:appId/retire", async (req, res) => {
       errors: null,
     });
   } catch {
-    res
-      .status(503)
-      .json({
-        status: "error",
-        statusCode: 503,
-        message: "Runtime cleanup unavailable",
-        data: null,
-        errors: null,
-      });
+    res.status(503).json({
+      status: "error",
+      statusCode: 503,
+      message: "Runtime cleanup unavailable",
+      data: null,
+      errors: null,
+    });
   }
 });
 

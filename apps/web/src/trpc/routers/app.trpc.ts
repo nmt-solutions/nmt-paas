@@ -23,8 +23,7 @@ const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
       reject(
         new TRPCError({
           code: "TIMEOUT",
-          message:
-            "The deployment service did not respond in time. Please try again.",
+          message: "The deployment service did not respond in time. Please try again.",
         }),
       );
     }, milliseconds);
@@ -125,9 +124,7 @@ export const appRouter = createTRPCRouter({
     .input(appIdInput)
     .mutation(async ({ ctx, input }) => {
       const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const previousDeployment = [...app.deployments].sort(
-        (a, b) => b.id - a.id,
-      )[0];
+      const previousDeployment = [...app.deployments].sort((a, b) => b.id - a.id)[0];
       if (!previousDeployment) {
         throw new TRPCError({
           code: "BAD_REQUEST",

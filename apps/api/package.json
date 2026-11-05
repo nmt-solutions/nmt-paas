@@ -19,7 +19,8 @@
     "lint": "eslint --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test:runtime-logs": "node --import tsx --test test/runtime-logs.test.ts",
-    "test:retirement": "node --import tsx --test test/app-retirement.test.ts"
+    "test:retirement": "node --import tsx --test test/app-retirement.test.ts",
+    "check-types:test": "tsc -p tsconfig.test.json"
   },
   "keywords": [],
   "author": "",

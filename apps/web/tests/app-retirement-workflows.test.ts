@@ -706,3 +706,40 @@ test(
     );
   },
 );
+
+test(
+  "concurrent retirement requests converge without exhausting the application pool",
+  { timeout: 5000 },
+  async () => {
+    const userId = "concurrent-retirement-owner";
+    const resource = await resourceFixture(userId);
+    await seedRuntime(resource.appId, resource.deploymentId);
+    // An external database lock holds incoming sessions while the burst arrives.
+    // After release every request must finish, even beyond the default pool size.
+    await fixtures.query("SELECT pg_advisory_lock(2121, $1)", [resource.appId]);
+    const requests = Array.from({ length: 12 }, () =>
+      owner(userId).app.delete({ appId: resource.appId }),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      await fixtures.query("SELECT pg_advisory_unlock(2121, $1)", [
+        resource.appId,
+      ]);
+    }
+    const results = await Promise.all(requests);
+    assert.ok(
+      results.every(
+        (result) =>
+          result.resourceStatus === "inactive" &&
+          result.retirement?.status === "complete",
+      ),
+    );
+    await assert.rejects(
+      dockerFixture.docker
+        .getContainer(`deployment-${resource.deploymentId}`)
+        .inspect(),
+      { statusCode: 404 },
+    );
+  },
+);

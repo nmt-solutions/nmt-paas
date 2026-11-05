@@ -1,5 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { database } from "..";
+import { Client } from "pg";
+import env from "../env/vars";
 import { Apps, AppDomains, Deployments } from "../schema";
 
 // A session lock spans host cleanup without holding a database transaction open.
@@ -8,23 +10,16 @@ export async function withAppLifecycleLock<T>(
   appId: number,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const connection = await database.$client.connect();
-  let destroy = true;
+  // Waiters use separate short-lived sessions so a request burst cannot
+  // consume every application-pool slot needed by the lock holder's writes.
+  const connection = new Client({ connectionString: env.databaseUrl });
+  await connection.connect();
   try {
     await connection.query("SELECT pg_advisory_lock(2121, $1)", [appId]);
-    destroy = false;
-    try {
-      return await operation();
-    } finally {
-      try {
-        await connection.query("SELECT pg_advisory_unlock(2121, $1)", [appId]);
-      } catch {
-        // A broken session must never return to the pool holding this lock.
-        destroy = true;
-      }
-    }
+    return await operation();
   } finally {
-    connection.release(destroy);
+    // Closing the session releases its advisory lock, including on failures.
+    await connection.end();
   }
 }
 
