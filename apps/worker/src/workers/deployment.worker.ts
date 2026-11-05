@@ -12,6 +12,11 @@ import {
 } from "@repo/database/access-layer/deployment.dal";
 
 import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
+import {
+  getPublication,
+  recordPublication,
+  updatePublication,
+} from "@repo/database/access-layer/deployment-publication.dal";
 
 import {
   createBuilderContainer,
@@ -26,6 +31,9 @@ import { safeDiagnosticError } from "../services/diagnostics.js";
 
 const executeDeployment = createDeploymentExecutor({
   getDeployment,
+  getPublication,
+  recordPublication,
+  updatePublication,
   updateDeployment,
   createDeploymentLogs,
   getDocker,

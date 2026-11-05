@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { publishImage } from "./publish-image.js";
 import type Docker from "dockerode";
 import {
   DiagnosticOutput,
@@ -8,7 +9,11 @@ import {
   withDeploymentDiagnostics,
 } from "../services/diagnostics.js";
 
-export type DeploymentRequest = { userId: string; deploymentId: number };
+export type DeploymentRequest = {
+  userId: string;
+  deploymentId: number;
+  operation?: "publish";
+};
 
 type DeploymentStatus =
   | "queued"
@@ -39,7 +44,28 @@ type DeploymentSnapshot = {
   } | null;
 };
 
+export type PublicationRecord = {
+  deploymentId: number;
+  imageId: string;
+  imageName: string;
+  status: "pending" | "publishing" | "published" | "failed";
+  lastError: string | null;
+};
+
 export type DeploymentExecutionDependencies = {
+  getPublication: (
+    deploymentId: number,
+    userId: string,
+  ) => Promise<PublicationRecord | undefined>;
+  recordPublication: (
+    image: Pick<PublicationRecord, "deploymentId" | "imageId" | "imageName">,
+    userId: string,
+  ) => Promise<unknown>;
+  updatePublication: (
+    deploymentId: number,
+    state: Pick<PublicationRecord, "status" | "lastError">,
+    userId: string,
+  ) => Promise<unknown>;
   getDeployment: (id: number) => Promise<DeploymentSnapshot | undefined>;
   updateDeployment: (
     params: { id: number; status: DeploymentStatus },
@@ -85,6 +111,9 @@ type DeploymentContainer = {
  */
 export const createDeploymentExecutor = ({
   getDeployment,
+  getPublication,
+  recordPublication,
+  updatePublication,
   updateDeployment,
   createDeploymentLogs,
   getDocker,
@@ -279,83 +308,38 @@ export const createDeploymentExecutor = ({
     }
   };
 
-  const pushImage = async (
-    docker: Docker,
-    imageName: string,
-    deploymentId: number,
-  ) => {
+  const publish = async (deploymentId: number, userId: string) => {
+    const publication = await getPublication(deploymentId, userId);
+    if (!publication) throw new Error("Publication not found");
+    if (publication.status === "published") return;
     try {
-      const image = docker.getImage(imageName);
-
-      const stream = await image.push({
-        authconfig: {
-          username: registry.username.toLowerCase(),
-          password: registry.password,
-          serveraddress: "ghcr.io",
-        },
-      });
-
-      let lastPercent = -1;
-      let pushed = false;
-
-      await new Promise<void>((resolve, reject) => {
-        stream.on("error", reject);
-
-        stream.on("end", resolve);
-
-        stream.on("data", (chunk: Buffer) => {
-          const output = chunk.toString("utf8").trim();
-
-          if (!output) {
-            return;
-          }
-
-          for (const line of output.split("\n")) {
-            try {
-              const data = JSON.parse(line);
-
-              if (data.status === "Pushing" && data.progressDetail?.total) {
-                const { current = 0, total } = data.progressDetail;
-
-                const percent = Math.floor((current / total) * 100);
-
-                const roundedPercent = Math.floor(percent / 10) * 10;
-
-                if (roundedPercent > lastPercent) {
-                  lastPercent = roundedPercent;
-
-                  console.log(`[GHCR] Pushing ${roundedPercent}%`);
-                }
-
-                continue;
-              }
-
-              if (data.status === "Pushed") {
-                pushed = true;
-                console.log("[GHCR] Pushed");
-                continue;
-              }
-
-              if (data.status?.includes("digest:")) {
-                console.log(redactDiagnostic(`[GHCR] ${data.status}`));
-              }
-            } catch {
-              // Docker can send non-JSON output.
-            }
-          }
-        });
-      });
-
-      if (!pushed) {
-        console.log(
-          `[GHCR] Push stream completed for deployment ${deploymentId}`,
+      await updatePublication(
+        deploymentId,
+        { status: "publishing", lastError: null },
+        userId,
+      );
+      await publishImage(await getDocker(), publication, registry);
+      await updatePublication(
+        deploymentId,
+        { status: "published", lastError: null },
+        userId,
+      );
+    } catch (failure) {
+      const error = safeDiagnosticError(failure, "Registry publication failed");
+      try {
+        await updatePublication(
+          deploymentId,
+          { status: "failed", lastError: error.message.slice(0, 2000) },
+          userId,
+        );
+      } catch (persistenceError) {
+        console.error(
+          "Unable to save publication outcome:",
+          safeDiagnosticError(persistenceError),
         );
       }
-    } catch (error) {
-      console.error(
-        `Failed to push image for deployment ${deploymentId}:`,
-        safeDiagnosticError(error),
-      );
+      console.error(error);
+      throw error;
     }
   };
 
@@ -462,6 +446,12 @@ export const createDeploymentExecutor = ({
         createdBy: userId,
       });
       console.log(startMessage);
+      if (!committedImageId)
+        throw new Error("Started runtime image identity unavailable");
+      await recordPublication(
+        { deploymentId, imageName, imageId: committedImageId },
+        userId,
+      );
       const oldContainers = await getDeploymentContainers(
         docker,
         deployment.appId,
@@ -493,7 +483,7 @@ export const createDeploymentExecutor = ({
       }
       void Promise.allSettled([
         streamDeploymentLogs(docker, container, deploymentId, userId),
-        pushImage(docker, imageName, deploymentId),
+        withAppLock(deployment.appId, () => publish(deploymentId, userId)),
       ]);
     };
 
@@ -521,6 +511,7 @@ export const createDeploymentExecutor = ({
         // that may already be serving traffic.
         const details = await container.inspect();
         deploymentContainer = container;
+        committedImageId = details.Image;
         if (!details.State.Running) await deploymentContainer.start();
         deploymentContainerStarted = true;
         onRuntimeStarted();
@@ -844,9 +835,25 @@ export const createDeploymentExecutor = ({
     }
   };
 
-  return async ({ userId, deploymentId }: DeploymentRequest): Promise<void> =>
+  return async ({
+    userId,
+    deploymentId,
+    operation,
+  }: DeploymentRequest): Promise<void> =>
     withDeploymentDiagnostics(async () => {
       registerDiagnosticSecrets(registry.password);
+
+      if (operation === "publish") {
+        // Recovery has its own outcome. It never enters deployment finalization,
+        // starts a container, or retires a runtime (including a newer release).
+        const publication = await getPublication(deploymentId, userId);
+        if (!publication) throw new Error("Publication not found");
+        const deployment = await getDeployment(deploymentId);
+        if (!deployment) throw new Error("Publication not found");
+        return withAppLock(deployment.appId, () =>
+          publish(deploymentId, userId),
+        );
+      }
 
       const reportFailure = async (
         failure: unknown,

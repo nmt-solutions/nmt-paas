@@ -5,7 +5,28 @@ import { createDockerCommandAdapter } from "../src/deployment/docker-command-ada
 import {
   createDeploymentExecutor,
   type DeploymentExecutionDependencies,
+  type PublicationRecord,
 } from "../src/deployment/execute-deployment.js";
+
+// In-memory persistence for Docker smoke cases; no registry credentials or
+// real registry publication are part of this existing daemon smoke suite.
+const publicationPersistence = () => {
+  let record: PublicationRecord | undefined;
+  return {
+    getPublication: async () => record,
+    recordPublication: async (
+      image: Pick<PublicationRecord, "deploymentId" | "imageId" | "imageName">,
+    ) => {
+      record ??= { ...image, status: "pending", lastError: null };
+    },
+    updatePublication: async (
+      _id: number,
+      state: Pick<PublicationRecord, "status" | "lastError">,
+    ) => {
+      if (record) Object.assign(record, state);
+    },
+  };
+};
 
 // Explicit opt-in: needs a disposable local Docker daemon and public image/package access.
 // The clone deliberately fails before any runtime, network, image commit, or registry push.
@@ -71,6 +92,7 @@ test(
       },
     };
     const dependencies: DeploymentExecutionDependencies = {
+      ...publicationPersistence(),
       ...database,
       getDocker: async () => docker,
       ...createDockerCommandAdapter({
@@ -172,6 +194,7 @@ test(
       },
     };
     const dependencies: DeploymentExecutionDependencies = {
+      ...publicationPersistence(),
       ...database,
       getDocker: async () => docker,
       ...createDockerCommandAdapter({
@@ -290,6 +313,7 @@ test(
       throw new Error("A recovered runtime must not build again");
     };
     const dependencies: DeploymentExecutionDependencies = {
+      ...publicationPersistence(),
       getDeployment: async () => deployment,
       updateDeployment: async ({ status }) => {
         deployment.status = status;

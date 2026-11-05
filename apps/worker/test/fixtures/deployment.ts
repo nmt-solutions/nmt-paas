@@ -20,6 +20,7 @@ export async function deploymentFixture({
   disappearOnRemove = [],
   beforeRemove,
   failInspect = {},
+  pushOutput = () => ['{"status":"42: digest: sha256:1234 size: 123"}\n'],
 }: {
   failCommand?: string;
   source?: {
@@ -36,6 +37,7 @@ export async function deploymentFixture({
   disappearOnRemove?: string[];
   beforeRemove?: (id: string) => Promise<void>;
   failInspect?: Record<string, string>;
+  pushOutput?: (authorization: string) => string[];
 } = {}) {
   const containers = new Map([
     [
@@ -217,7 +219,13 @@ export async function deploymentFixture({
     }
     if (url.pathname.startsWith("/images/") && url.pathname.endsWith("/push")) {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end('{"status":"Pushed"}\n');
+      for (const chunk of pushOutput(
+        String(request.headers["x-registry-auth"]),
+      )) {
+        response.write(chunk);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      response.end();
       return;
     }
     const match = url.pathname.match(
@@ -256,6 +264,9 @@ export async function deploymentFixture({
         if (failInspect[id]) return send(500, { message: failInspect[id] });
         return send(200, {
           Name: container.Names[0],
+          Image:
+            images.get(configurations.get(id)?.Image ?? "")?.id ??
+            "fixture-image",
           State: { Running: container.State === "running" },
           Config: configurations.get(id),
         });
@@ -330,6 +341,16 @@ export async function deploymentFixture({
   const logs: { deploymentId: number; message: string; createdBy: string }[] =
     [];
   const deployments = new Map([[deploymentId, deployment]]);
+  const publications = new Map<
+    number,
+    {
+      deploymentId: number;
+      imageId: string;
+      imageName: string;
+      status: "pending" | "publishing" | "published" | "failed";
+      lastError: string | null;
+    }
+  >();
   const database = {
     getDeployment: async (id: number) => deployments.get(id),
     createDeployment: async (id: number, appId = 7) => {
@@ -349,6 +370,36 @@ export async function deploymentFixture({
     },
     getLogs: async (id: number) =>
       logs.filter((log) => log.deploymentId === id),
+    getPublication: async (id: number, owner: string) =>
+      owner === userId ? publications.get(id) : undefined,
+    recordPublication: async (record: {
+      deploymentId: number;
+      imageId: string;
+      imageName: string;
+    }) => {
+      const existing = publications.get(record.deploymentId);
+      if (
+        existing &&
+        (existing.imageId !== record.imageId ||
+          existing.imageName !== record.imageName)
+      )
+        throw new Error("Publication image identity changed");
+      if (!existing)
+        publications.set(record.deploymentId, {
+          ...record,
+          status: "pending",
+          lastError: null,
+        });
+    },
+    updatePublication: async (
+      id: number,
+      state: {
+        status: "pending" | "publishing" | "published" | "failed";
+        lastError: string | null;
+      },
+    ) => {
+      Object.assign(publications.get(id)!, state);
+    },
   };
   const dependencies: DeploymentExecutionDependencies = {
     ...database,

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,7 @@ type config struct{ port, apiKey, redisHost, redisPort, redisPassword string }
 type queuePayload struct {
 	UserID       string  `json:"userId"`
 	DeploymentID float64 `json:"deploymentId"`
+	Operation    string  `json:"operation,omitempty"`
 }
 type apiResponse struct {
 	Status     string `json:"status"`
@@ -59,6 +61,7 @@ func main() {
 	authenticated := router.Group("/api/v1")
 	authenticated.Use(requireAPIAuth(cfg.apiKey))
 	authenticated.POST("/deployments/queue", queueDeployment(cfg))
+	authenticated.POST("/deployments/publication", queuePublication(cfg))
 	authenticated.GET("/admin/host", adminHost)
 	authenticated.GET("/admin/docker/:resource", dockerResources)
 	authenticated.DELETE("/admin/docker/:resource/:id", deleteDockerResource)
@@ -138,7 +141,9 @@ func requireAPIAuth(key string) gin.HandlerFunc {
 	}
 }
 
-func queueDeployment(cfg config) gin.HandlerFunc {
+func queueDeployment(cfg config) gin.HandlerFunc  { return queueHandler(cfg, false) }
+func queuePublication(cfg config) gin.HandlerFunc { return queueHandler(cfg, true) }
+func queueHandler(cfg config, publication bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var raw json.RawMessage
 		decoder := json.NewDecoder(c.Request.Body)
@@ -182,12 +187,24 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 			validationError(c, []string{}, fields)
 			return
 		}
-		data, _ := json.Marshal(queuePayload{UserID: userID, DeploymentID: deploymentID})
+		payload := queuePayload{UserID: userID, DeploymentID: deploymentID}
 		// Match Express's numeric identity without changing the accepted schema.
 		if deploymentID == 0 {
 			deploymentID = 0 // Normalize negative zero.
 		}
 		jobID := fmt.Sprintf("deployment-%016x", math.Float64bits(deploymentID))
+		message := "Deployment Queued"
+		if publication {
+			payload.Operation = "publish"
+			identity := make([]byte, 16)
+			if _, err := rand.Read(identity); err != nil {
+				c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
+				return
+			}
+			jobID = fmt.Sprintf("publication-%x", identity)
+			message = "Publication Queued"
+		}
+		data, _ := json.Marshal(payload)
 		if err := addBullMQJob(c.Request.Context(), cfg, jobID, string(data)); err != nil {
 			if errors.Is(err, errDeploymentEnqueueConflict) {
 				c.JSON(409, response(409, 409, err.Error(), nil, nil))
@@ -196,7 +213,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 			c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
 			return
 		}
-		c.JSON(201, response(201, 201, "Deployment Queued", true, nil))
+		c.JSON(201, response(201, 201, message, true, nil))
 	}
 }
 func jsonType(raw json.RawMessage) string {

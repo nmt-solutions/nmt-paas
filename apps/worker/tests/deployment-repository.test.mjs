@@ -101,6 +101,8 @@ test(
       await import("@repo/database/access-layer/apps.dal");
     const { getDeployment, updateDeployment } =
       await import("@repo/database/access-layer/deployment.dal");
+    const publicationPersistence =
+      await import("@repo/database/access-layer/deployment-publication.dal");
     const { createDeploymentLogs } =
       await import("@repo/database/access-layer/deployment-logs.dal");
     const { getCloneUrl } = await import("../src/services/github.ts");
@@ -187,6 +189,7 @@ test(
         t.after(fixture.close);
         const dependencies = {
           ...fixture.dependencies,
+          ...publicationPersistence,
           getDeployment,
           updateDeployment,
           createDeploymentLogs,
@@ -220,6 +223,7 @@ test(
         t.after(fixture.close);
         const dependencies = {
           ...fixture.dependencies,
+          ...publicationPersistence,
           getDeployment,
           updateDeployment,
           createDeploymentLogs,

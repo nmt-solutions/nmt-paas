@@ -98,3 +98,5 @@ Go and Express producers. `test:docker` requires a real disposable Docker daemon
 fixture success and type checking do not establish real-daemon compatibility.
 The recovery smoke case checks adoption/retirement by actual container IDs with
 fixture persistence. Report missing Docker evidence explicitly when unavailable.
+
+Publication-only recovery is described in [Recovering image publication](deployment-image-publication.md). It preserves the running deployment and uses the recorded image after worker restart.

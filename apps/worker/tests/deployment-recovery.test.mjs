@@ -243,6 +243,7 @@ test(
         { timeout: 20_000 },
         async (t) => {
           await database.delete(schema.DeploymentLogs);
+          await database.delete(schema.DeploymentPublications);
           await database.delete(schema.Deployments);
           await createDeployment({
             id: deploymentId,

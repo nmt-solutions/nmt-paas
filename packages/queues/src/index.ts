@@ -1,4 +1,5 @@
 import { Queue } from "bullmq";
+import { randomUUID } from "node:crypto";
 import IORedis from "ioredis";
 import env from "./env/vars";
 
@@ -15,6 +16,7 @@ const connection = new IORedis({
 type DeploymentPayload = {
   userId: string;
   deploymentId: number;
+  operation?: "publish";
 };
 
 export class DeploymentEnqueueConflict extends Error {
@@ -70,4 +72,22 @@ export async function enqueueDeployment(data: DeploymentPayload) {
     throw new DeploymentEnqueueConflict();
   }
   return retained;
+}
+
+export async function enqueuePublication(data: {
+  userId: string;
+  deploymentId: number;
+}) {
+  if (connection.status !== "ready")
+    throw new Error("Deployment queue is unavailable.");
+  // Explicit recovery is separate work from a retained deployment delivery.
+  // Repeated recovery is safe: the executor serializes by app and checks the
+  // persisted publication result before contacting the registry.
+  return deploymentQueue.add(
+    "deployment-queue",
+    { ...data, operation: "publish" },
+    {
+      jobId: `publication-${randomUUID()}`,
+    },
+  );
 }

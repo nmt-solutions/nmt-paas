@@ -6,8 +6,72 @@ import {
   initializeNewProjectAndDeploy,
 } from "@/services/projects";
 import { TRPCError } from "@trpc/server";
+import { getPublicationDeployment } from "@repo/database/access-layer/deployment-publication.dal";
+import cpApiClient from "@/services/cp-api-client";
+
+const publicationInput = z.object({
+  deploymentId: z.number().int().positive(),
+});
+
+const requirePublication = async (
+  deploymentId: number,
+  userId: string,
+  administrator: boolean,
+) => {
+  const record = await getPublicationDeployment(
+    deploymentId,
+    userId,
+    administrator,
+  );
+  if (!record)
+    throw new TRPCError({ code: "NOT_FOUND", message: "Deployment not found" });
+  return record;
+};
 
 export const deploymentRouter = createTRPCRouter({
+  publication: authenticatedProcedure
+    .input(publicationInput)
+    .query(async ({ ctx, input }) => {
+      const record = await requirePublication(
+        input.deploymentId,
+        ctx.userInfo.user.id,
+        ctx.userInfo.permissions?.includes("admin") ?? false,
+      );
+      return {
+        deploymentId: record.deploymentId,
+        status: record.status,
+        publication: record.publication,
+      };
+    }),
+  retryPublication: authenticatedProcedure
+    .input(publicationInput)
+    .mutation(async ({ ctx, input }) => {
+      const record = await requirePublication(
+        input.deploymentId,
+        ctx.userInfo.user.id,
+        ctx.userInfo.permissions?.includes("admin") ?? false,
+      );
+      if (!record.publication || record.status !== "success")
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "No started deployment image is available for publication recovery",
+        });
+      if (record.publication.status === "published")
+        return { deploymentId: input.deploymentId, queued: false };
+      try {
+        // The worker receives the deployment owner even when an administrator
+        // requests recovery. Host credentials and image selection stay server-side.
+        await cpApiClient.queuePublication(input.deploymentId, record.userId);
+      } catch {
+        throw new TRPCError({
+          code: "BAD_GATEWAY",
+          message:
+            "Publication recovery was not acknowledged. Check its status before retrying.",
+        });
+      }
+      return { deploymentId: input.deploymentId, queued: true };
+    }),
   deploy: authenticatedProcedure
     .input(
       z.object({

@@ -12,7 +12,8 @@
     "test:deployment-result": "tsx --tsconfig test/tsconfig.json --experimental-test-module-mocks --test test/deployment-result.test.mjs",
     "test:auth": "node tests/run-auth-workflows.mjs",
     "test:import": "node tests/run-import-workflows.mjs",
-    "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts"
+    "test:runtime-logs": "node --experimental-test-module-mocks --conditions react-server --import tsx --test test/runtime-logs-route.test.ts",
+    "test:publication": "tsx --tsconfig test/tsconfig.json --experimental-test-module-mocks --test test/publication.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
