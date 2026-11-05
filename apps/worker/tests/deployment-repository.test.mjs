@@ -5,6 +5,7 @@ import process from "node:process";
 import test, { mock } from "node:test";
 import { URL } from "node:url";
 import pg from "pg";
+import { readHistoryLogs } from "./history.mjs";
 
 test(
   "repository execution uses persisted context through the production GitHub adapter",
@@ -199,7 +200,7 @@ test(
         await execute({ userId, deploymentId: deployment.id });
         const view = await getUserApp(app.id, userId);
         assert.equal(view.deployments[0].status, "success");
-        const logs = view.deployments[0].deploymentLogs
+        const logs = (await readHistoryLogs(app.id, deployment.id, userId))
           .map((log) => log.message)
           .join("\n");
         assert.match(logs, /github.com\/moved-org\/renamed-repository.git/);
@@ -234,7 +235,7 @@ test(
         );
         const view = await getUserApp(app.id, userId);
         assert.equal(view.deployments[0].status, "failed");
-        const logs = view.deployments[0].deploymentLogs
+        const logs = (await readHistoryLogs(app.id, deployment.id, userId))
           .map((log) => log.message)
           .join("\n");
         assert.match(
@@ -276,7 +277,7 @@ test(
         const view = await getUserApp(app.id, userId);
         assert.equal(view.deployments[0].status, "failed");
         assert.match(
-          view.deployments[0].deploymentLogs.at(-1).message,
+          (await readHistoryLogs(app.id, deployment.id, userId)).at(-1).message,
           /GitHub installation unavailable.*[Rr]econnect/,
         );
         assert.deepEqual(
@@ -315,7 +316,7 @@ test(
         const view = await getUserApp(app.id, userId);
         assert.equal(view.deployments[0].status, "failed");
         assert.match(
-          view.deployments[0].deploymentLogs.at(-1).message,
+          (await readHistoryLogs(app.id, deployment.id, userId)).at(-1).message,
           /GitHub installation not found.*[Cc]onnect/,
         );
         assert.deepEqual(
