@@ -63,7 +63,7 @@ npx turbo run build --filter=worker
 
 Use a disposable local PostgreSQL server whose fixture user can create/drop
 databases. The repository workflow creates a unique database, applies the real
-migration, persists setup/attempts through the production database layer, and
+migrations, persists setup/attempts through the production database layer, and
 reads results through the app workflow. It exercises the production GitHub and
 Docker command adapters through the execution entry point. Only the Octokit and
 Docker service boundaries are fixtures; no live GitHub credentials are required.
