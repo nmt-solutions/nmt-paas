@@ -75,8 +75,8 @@ npm run test:failures --workspace=worker
 npm run test:diagnostics --workspace=worker
 ```
 
-`test:failures` creates and drops its own database, applies the development
-migration, uses production deployment/log DAL adapters, and reloads owner history
+`test:failures` creates and drops its own database, applies the committed development
+migrations, uses production deployment/log DAL adapters, and reloads owner history
 through `getUserApp`. Seven scenarios check saved failure and cleanup diagnostics
 alongside observable Docker fixture artifacts. It requires a real PostgreSQL
 server; without `TEST_DATABASE_URL` it reports a skip. The existing diagnostics

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import process from "node:process";
 import test from "node:test";
 import { URL } from "node:url";
@@ -36,15 +36,22 @@ test(
       await admin.query(`DROP DATABASE "${name}" WITH (FORCE)`);
       await admin.end();
     });
-    await fixtureDb.query(
-      await readFile(
-        new URL(
-          "../../../packages/database/database/development/20260824171710_wakeful_typhoid_mary/migration.sql",
-          import.meta.url,
-        ),
-        "utf8",
-      ),
+    const migrations = new URL(
+      "../../../packages/database/database/development/",
+      import.meta.url,
     );
+    const directories = (await readdir(migrations, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    for (const directory of directories) {
+      await fixtureDb.query(
+        await readFile(
+          new URL(`${directory}/migration.sql`, migrations),
+          "utf8",
+        ),
+      );
+    }
     Object.assign(process.env, {
       DB_ENV: "development",
       DEV_DATABASE_URL: url.href,
