@@ -78,7 +78,7 @@ test(
         getDocker: async () => docker,
       }),
       getCloneUrl: async () => `/ticket-9-missing-fixture-${deploymentId}`,
-      fetchEnvVars: async () => "",
+      fetchEnvVars: async () => [],
       registry: { username: "fixture", password: "fixture-only" },
     };
 
@@ -181,7 +181,7 @@ test(
       getCloneUrl: async () => {
         throw new Error("Preparation should fail before cloning");
       },
-      fetchEnvVars: async () => "",
+      fetchEnvVars: async () => [],
       registry: { username: "fixture", password: "fixture-only" },
     };
 
@@ -299,7 +299,7 @@ test(
       createBuilderContainer: unavailableRepository,
       executeCommand: unavailableRepository,
       getCloneUrl: unavailableRepository,
-      fetchEnvVars: async () => "",
+      fetchEnvVars: async () => [],
       registry: { username: "fixture", password: "fixture-only" },
     };
     await createDeploymentExecutor(dependencies)({

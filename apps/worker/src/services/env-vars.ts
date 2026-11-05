@@ -25,7 +25,7 @@ export function decrypt(payload: string): string {
 
   const [ivB64, authTagB64, encryptedB64] = payload.split(":");
 
-  if (!ivB64 || !authTagB64 || !encryptedB64) {
+  if (!ivB64 || !authTagB64 || encryptedB64 === undefined) {
     throw new Error("Invalid encrypted payload");
   }
 
@@ -48,14 +48,12 @@ export function decrypt(payload: string): string {
 export const fetchEnvVars = async (
   projectId: number,
   env: "production" | "preview",
-): Promise<string> => {
+): Promise<{ key: string; value: string }[]> => {
   const envVars = await getEnvVars(projectId, env);
 
-  return envVars
-    .map((envVar) => {
-      const value = decrypt(envVar.encryptedValue);
-      registerDiagnosticSecrets(value);
-      return `${envVar.key}=${value}`;
-    })
-    .join("\n");
+  return envVars.map((envVar) => {
+    const value = decrypt(envVar.encryptedValue);
+    registerDiagnosticSecrets(value);
+    return { key: envVar.key, value };
+  });
 };

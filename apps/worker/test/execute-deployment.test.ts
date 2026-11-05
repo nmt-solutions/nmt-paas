@@ -442,6 +442,8 @@ for (const scenario of [
     fixture.images.set("ghcr.io/other/runtime:stable", {
       id: "unrelated-image",
       changes: [],
+      files: {},
+      environment: [],
     });
     await assert.rejects(
       createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
@@ -530,6 +532,8 @@ test("failed-image cleanup preserves another app's tag when Docker reports share
   fixture.images.set("ghcr.io/other/runtime:stable", {
     id: "fixture-image",
     changes: [],
+    files: {},
+    environment: [],
   });
 
   await assert.rejects(
@@ -814,6 +818,10 @@ test("a delivery resumes its committed image when the worker stopped before runt
 
   await createDeploymentExecutor({
     ...fixture.dependencies,
+    fetchEnvVars: async () => [
+      { key: "APP_SECRET", value: "merge-16-image-secret=$HOME\nsecond=line" },
+      { key: "EMPTY_VALUE", value: "" },
+    ],
     getCloneUrl: async () => {
       throw new Error("Repository temporarily unavailable");
     },
@@ -823,9 +831,67 @@ test("a delivery resumes its committed image when the worker stopped before runt
       .Running,
     true,
   );
+  assert.deepEqual(
+    (await fixture.docker.getContainer("deployment-42").inspect()).Config.Env,
+    ["APP_SECRET=merge-16-image-secret=$HOME\nsecond=line", "EMPTY_VALUE="],
+  );
   assert.equal(
     (await fixture.database.getDeployment(deploymentId))?.status,
     "success",
+  );
+});
+
+test("a fresh executor registers structured secrets before reading an adopted runtime without rebuilding", async (t) => {
+  const fixture = await deploymentFixture({
+    source: {
+      rootDirectory: "/app",
+      head: "1234567890abcdef1234567890abcdef12345678",
+      commits: {
+        "1234567890abcdef1234567890abcdef12345678":
+          "recovered output merge-16-adoption-secret",
+      },
+    },
+  });
+  t.after(fixture.close);
+  const dependencies = {
+    ...fixture.dependencies,
+    fetchEnvVars: async () => [
+      { key: "APP_SECRET", value: "merge-16-adoption-secret" },
+    ],
+  };
+  const waitForOutput = async (offset: number) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const logs = (await fixture.database.getLogs(deploymentId))
+        .slice(offset)
+        .map((log) => log.message)
+        .join("\n");
+      if (logs.includes("recovered output")) return logs;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail("adopted runtime output was not captured");
+  };
+  await createDeploymentExecutor(dependencies)({ userId, deploymentId });
+  await waitForOutput(0);
+  const offset = (await fixture.database.getLogs(deploymentId)).length;
+  const image = fixture.images.get("ghcr.io/fixture/42:42");
+  await createDeploymentExecutor({
+    ...dependencies,
+    getCloneUrl: async () => {
+      throw new Error("Repository temporarily unavailable");
+    },
+    createBuilderContainer: async () => {
+      throw new Error("Adoption must not rebuild");
+    },
+  })({ userId, deploymentId });
+  const logs = await waitForOutput(offset);
+  assert.match(logs, /recovered output \[REDACTED\]/);
+  assert.doesNotMatch(logs, /merge-16-adoption-secret/);
+  assert.equal(fixture.images.get("ghcr.io/fixture/42:42"), image);
+  assert.deepEqual(image?.environment, []);
+  assert.ok(
+    !Object.keys(image?.files ?? {}).some((path) =>
+      /\/\.env$|\/\.git\//.test(path),
+    ),
   );
 });
 
@@ -888,6 +954,8 @@ test("an image tag without this deployment's identity is preserved", async (t) =
   fixture.images.set("ghcr.io/fixture/42:42", {
     id: "foreign-image",
     changes: [],
+    files: {},
+    environment: [],
   });
   await assert.rejects(
     createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
@@ -896,6 +964,38 @@ test("an image tag without this deployment's identity is preserved", async (t) =
   assert.equal(
     (await fixture.docker.getImage("ghcr.io/fixture/42:42").inspect()).Id,
     "foreign-image",
+  );
+  assert.equal(
+    (await fixture.docker.getContainer("previous").inspect()).State.Running,
+    true,
+  );
+});
+
+test("a credential-removal failure prevents image commit and preserves the previous runtime", async (t) => {
+  const fixture = await deploymentFixture({
+    failCommand: "rm -rf -- /app/.git",
+  });
+  t.after(fixture.close);
+
+  await assert.rejects(
+    createDeploymentExecutor(fixture.dependencies)({ userId, deploymentId }),
+    /Remove build credentials failed \(exit code 1\)/,
+  );
+
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "failed",
+  );
+  assert.equal(fixture.images.size, 0);
+  assert.match(
+    (await fixture.database.getLogs(deploymentId)).at(-1)?.message ?? "",
+    /Remove build credentials failed/,
+  );
+  assert.deepEqual(
+    (await fixture.docker.listContainers({ all: true }))
+      .map((container) => container.Id)
+      .sort(),
+    ["previous", "unrelated"],
   );
   assert.equal(
     (await fixture.docker.getContainer("previous").inspect()).State.Running,
