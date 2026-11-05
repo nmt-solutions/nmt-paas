@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -466,9 +467,21 @@ func runtimeLogsHandler(client *http.Client, heartbeatInterval time.Duration) gi
 			c.Writer.Flush()
 		}
 		write(": connected\n\n")
+		write(fmt.Sprintf("event: runtime\ndata: {\"deploymentId\":%d}\n\n", int64(value)))
+		finish := func(err error) {
+			if c.Request.Context().Err() != nil {
+				return
+			}
+			reason := "eof"
+			if err != nil {
+				write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
+				reason = "error"
+			}
+			write("event: end\ndata: {\"reason\":\"" + reason + "\"}\n\n")
+		}
 		logs, err := dockerRequestWithClient(client, c.Request.Context(), "GET", fmt.Sprintf("/containers/deployment-%d/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=100", int64(value)))
 		if err != nil {
-			write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
+			finish(err)
 			return
 		}
 		defer logs.Body.Close()
@@ -489,23 +502,38 @@ func runtimeLogsHandler(client *http.Client, heartbeatInterval time.Duration) gi
 			}
 		}()
 		defer func() { heartbeat.Stop(); close(stopHeartbeat); <-done }()
-		streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+		err = streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+		finish(err)
 	}
 }
-func streamDockerLogs(reader io.Reader, onLine func(string)) {
+func streamDockerLogs(reader io.Reader, onLine func(string)) error {
+	pending := map[byte][]byte{}
 	for {
 		header := make([]byte, 8)
 		if _, err := io.ReadFull(reader, header); err != nil {
-			return
+			if err == io.EOF {
+				for _, stream := range []byte{1, 2} {
+					if len(pending[stream]) > 0 {
+						onLine(string(pending[stream]))
+					}
+				}
+				return nil
+			}
+			return err
 		}
 		payload := make([]byte, binary.BigEndian.Uint32(header[4:]))
 		if _, err := io.ReadFull(reader, payload); err != nil {
-			return
+			return err
 		}
-		for _, line := range strings.Split(string(payload), "\n") {
-			if line != "" {
-				onLine(line)
+		stream := header[0]
+		pending[stream] = append(pending[stream], payload...)
+		for {
+			newline := bytes.IndexByte(pending[stream], '\n')
+			if newline < 0 {
+				break
 			}
+			onLine(string(pending[stream][:newline]))
+			pending[stream] = pending[stream][newline+1:]
 		}
 	}
 }

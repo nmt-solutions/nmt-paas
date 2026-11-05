@@ -1,11 +1,13 @@
-import { PassThrough, Readable } from "node:stream";
+import { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
+import { encodeRuntimeLogEvent } from "@repo/api-sdk/runtime-logs";
 import { APIHandler } from "../../../models/api-handler.model.js";
-import { docker, getDeploymentContainer } from "../../../docker/docker.js";
+import { getDeploymentContainer } from "../../../docker/docker.js";
 
 const streamLogs = async (
   deploymentId: number,
   onLog: (line: string) => void,
-  onEnd: () => void,
+  onEnd: (error?: Error) => void,
   signal: AbortSignal,
 ): Promise<() => void> => {
   const container = getDeploymentContainer(deploymentId);
@@ -27,26 +29,40 @@ const streamLogs = async (
     return () => {};
   }
 
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-
-  const handleChunk = (chunk: Buffer) => {
-    const lines = chunk.toString("utf8").split("\n").filter(Boolean);
-
-    for (const line of lines) {
-      onLog(line);
-    }
+  const readLines = () => {
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    const write = (chunk: Buffer) => {
+      pending += decoder.write(chunk);
+      let newline: number;
+      while ((newline = pending.indexOf("\n")) !== -1) {
+        onLog(pending.slice(0, newline));
+        pending = pending.slice(newline + 1);
+      }
+    };
+    const end = () => {
+      pending += decoder.end();
+      if (pending) onLog(pending);
+    };
+    return { write, end };
   };
-
-  stdout.on("data", handleChunk);
-  stderr.on("data", handleChunk);
-
-  docker.modem.demuxStream(stream, stdout, stderr);
+  const stdout = readLines();
+  const stderr = readLines();
+  let pending: Buffer = Buffer.alloc(0);
+  stream.on("data", (chunk: Buffer) => {
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 8) {
+      const size = pending.readUInt32BE(4);
+      if (pending.length < size + 8) return;
+      const payload = pending.subarray(8, size + 8);
+      const output = pending[0] === 1 ? stdout : stderr;
+      pending = pending.subarray(size + 8);
+      output.write(payload);
+    }
+  });
 
   const close = () => {
     stream.destroy();
-    stdout.destroy();
-    stderr.destroy();
   };
 
   stream.on("error", (error) => {
@@ -55,10 +71,18 @@ const streamLogs = async (
       `Docker log stream error for deployment ${deploymentId}:`,
       error,
     );
+    onEnd(error);
+  });
+  stream.once("end", () => {
+    if (pending.length) {
+      onEnd(new Error("Incomplete Docker log frame."));
+      return;
+    }
+    stdout.end();
+    stderr.end();
     onEnd();
   });
-  stream.once("end", onEnd);
-  stream.once("close", onEnd);
+  stream.once("close", () => onEnd(new Error("Docker log stream closed.")));
 
   return close;
 };
@@ -91,6 +115,7 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
 
   // Tell the browser the connection is alive.
   res.write(": connected\n\n");
+  res.write(encodeRuntimeLogEvent({ type: "runtime", deploymentId }));
 
   let closeStream: (() => void) | undefined;
   let closed = false;
@@ -111,6 +136,21 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
     if (!res.writableEnded) res.end();
   };
   res.once("close", cleanup);
+  const finish = (error?: Error) => {
+    if (closed) return;
+    if (error) {
+      res.write(
+        encodeRuntimeLogEvent({
+          type: "error",
+          message: "Failed to read deployment logs.",
+        }),
+      );
+    }
+    res.write(
+      encodeRuntimeLogEvent({ type: "end", reason: error ? "error" : "eof" }),
+    );
+    cleanup();
+  };
 
   try {
     closeStream = await streamLogs(
@@ -120,9 +160,9 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
           return;
         }
 
-        res.write(`data: ${JSON.stringify(line)}\n\n`);
+        res.write(encodeRuntimeLogEvent({ type: "log", text: line }));
       },
-      cleanup,
+      finish,
       upstream.signal,
     );
     if (closed) closeStream();
@@ -133,14 +173,9 @@ export const streamRuntimeLogs: APIHandler = async (req, res) => {
       error,
     );
 
-    if (!res.writableEnded) {
-      res.write(
-        `event: error\ndata: ${JSON.stringify({
-          message: "Failed to read deployment logs.",
-        })}\n\n`,
-      );
-    }
-    cleanup();
+    finish(
+      error instanceof Error ? error : new Error("Docker logs unavailable."),
+    );
     return;
   }
 };
