@@ -17,6 +17,12 @@ type DeploymentPayload = {
   deploymentId: number;
 };
 
+export class DeploymentEnqueueConflict extends Error {
+  constructor() {
+    super("Deployment is already queued with a different payload.");
+  }
+}
+
 const deploymentQueue = new Queue<DeploymentPayload>("deployment-queue", {
   connection: connection as object,
 
@@ -44,5 +50,24 @@ export async function enqueueDeployment(data: DeploymentPayload) {
   if (connection.status !== "ready") {
     throw new Error("Deployment queue is unavailable.");
   }
-  return deploymentQueue.add("deployment-queue", data);
+  // Encode the numeric value, not its JSON spelling. Go uses the same IEEE-754
+  // bits, including for fractional/exponent values allowed by the HTTP schema.
+  const identity = Buffer.alloc(8);
+  identity.writeDoubleBE(data.deploymentId + 0); // Normalize negative zero.
+  const job = await deploymentQueue.add("deployment-queue", data, {
+    jobId: `deployment-${identity.toString("hex")}`,
+  });
+  // BullMQ atomically retains the first payload for a custom job ID. Its add()
+  // result contains the submitted data even for a duplicate, so read the actual
+  // retained record before acknowledging a retry.
+  const retained = await deploymentQueue.getJob(job.id!);
+  if (!retained) throw new Error("Deployment queue is unavailable.");
+  if (
+    retained.name !== "deployment-queue" ||
+    retained.data.userId !== data.userId ||
+    retained.data.deploymentId !== data.deploymentId
+  ) {
+    throw new DeploymentEnqueueConflict();
+  }
+  return retained;
 }

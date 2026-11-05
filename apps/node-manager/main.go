@@ -24,6 +24,8 @@ import (
 
 const queuePrefix = "bull:deployment-queue:"
 
+var errDeploymentEnqueueConflict = errors.New("Deployment is already queued with a different payload.")
+
 type config struct{ port, apiKey, redisHost, redisPort, redisPassword string }
 type queuePayload struct {
 	UserID       string  `json:"userId"`
@@ -181,7 +183,16 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 			return
 		}
 		data, _ := json.Marshal(queuePayload{UserID: userID, DeploymentID: deploymentID})
-		if err := addBullMQJob(c.Request.Context(), cfg, string(data)); err != nil {
+		// Match Express's numeric identity without changing the accepted schema.
+		if deploymentID == 0 {
+			deploymentID = 0 // Normalize negative zero.
+		}
+		jobID := fmt.Sprintf("deployment-%016x", math.Float64bits(deploymentID))
+		if err := addBullMQJob(c.Request.Context(), cfg, jobID, string(data)); err != nil {
+			if errors.Is(err, errDeploymentEnqueueConflict) {
+				c.JSON(409, response(409, 409, err.Error(), nil, nil))
+				return
+			}
 			c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
 			return
 		}
@@ -219,7 +230,7 @@ func validationError(c *gin.Context, formErrors []string, fields map[string][]st
 }
 
 // This writes BullMQ's Queue.add job representation so apps/worker can consume it unchanged.
-func addBullMQJob(ctx context.Context, cfg config, data string) error {
+func addBullMQJob(ctx context.Context, cfg config, jobID, data string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(cfg.redisHost, cfg.redisPort))
@@ -241,12 +252,42 @@ func addBullMQJob(ctx context.Context, cfg config, data string) error {
 		return err
 	}
 	options := `{"attempts":3,"backoff":{"type":"exponential","delay":2000},"removeOnComplete":100,"removeOnFail":1000}`
-	script := `local id=redis.call('INCR',KEYS[1]);local max=redis.call('HGET',KEYS[3],'opts.maxLenEvents');if not max then max=10000;redis.call('HSET',KEYS[3],'opts.maxLenEvents',max) end;local target=KEYS[4];local paused=redis.call('HGET',KEYS[3],'paused');if paused then target=KEYS[5] end;local key=KEYS[2]..id;redis.call('HMSET',key,'name',ARGV[1],'data',ARGV[2],'opts',ARGV[3],'timestamp',ARGV[4],'delay',0,'priority',0);redis.call('XADD',KEYS[6],'*','event','added','jobId',id,'name',ARGV[1]);redis.call('LPUSH',target,id);if not paused then redis.call('ZADD',KEYS[7],0,'0') end;redis.call('XADD',KEYS[6],'MAXLEN','~',max,'*','event','waiting','jobId',id);return id`
-	args := []string{"EVAL", script, "7", queuePrefix + "id", queuePrefix, queuePrefix + "meta", queuePrefix + "wait", queuePrefix + "paused", queuePrefix + "events", queuePrefix + "marker", "deployment-queue", data, options, strconv.FormatInt(time.Now().UnixMilli(), 10)}
+	script := `
+local id = ARGV[5]
+local key = KEYS[2] .. id
+if redis.call('EXISTS', key) == 1 then
+  local existing = cjson.decode(redis.call('HGET', key, 'data'))
+  local incoming = cjson.decode(ARGV[2])
+  if redis.call('HGET', key, 'name') ~= ARGV[1]
+    or existing.userId ~= incoming.userId
+    or existing.deploymentId ~= incoming.deploymentId then
+    return -1
+  end
+  return 0
+end
+redis.call('INCR', KEYS[1])
+local max = redis.call('HGET', KEYS[3], 'opts.maxLenEvents')
+if not max then
+  max = 10000
+  redis.call('HSET', KEYS[3], 'opts.maxLenEvents', max)
+end
+local target = KEYS[4]
+local paused = redis.call('HGET', KEYS[3], 'paused')
+if paused then target = KEYS[5] end
+redis.call('HMSET', key, 'name', ARGV[1], 'data', ARGV[2], 'opts', ARGV[3], 'timestamp', ARGV[4], 'delay', 0, 'priority', 0)
+redis.call('XADD', KEYS[6], '*', 'event', 'added', 'jobId', id, 'name', ARGV[1])
+redis.call('LPUSH', target, id)
+if not paused then redis.call('ZADD', KEYS[7], 0, '0') end
+redis.call('XADD', KEYS[6], 'MAXLEN', '~', max, '*', 'event', 'waiting', 'jobId', id)
+return 1`
+	args := []string{"EVAL", script, "7", queuePrefix + "id", queuePrefix, queuePrefix + "meta", queuePrefix + "wait", queuePrefix + "paused", queuePrefix + "events", queuePrefix + "marker", "deployment-queue", data, options, strconv.FormatInt(time.Now().UnixMilli(), 10), jobID}
 	if err := writeRedisCommand(conn, args...); err != nil {
 		return err
 	}
-	_, err = readRedisReply(reader)
+	result, err := readRedisReply(reader)
+	if err == nil && result == "-1" {
+		return errDeploymentEnqueueConflict
+	}
 	return err
 }
 func writeRedisCommand(w io.Writer, args ...string) error {

@@ -15,15 +15,18 @@ Send the server-held API key as `Authorization: Bearer <API_KEY>` and a JSON bod
 ```
 
 The existing payload schema is preserved: a nonempty string `userId` and a finite,
-nonnegative numeric `deploymentId`. Extra properties are stripped. This ticket
-does not tighten the numeric schema to positive integers or add deduplication.
+nonnegative numeric `deploymentId`. Extra properties are stripped. The schema
+does not tighten numeric values to positive integers. Both producers use a
+stable deployment-derived job ID; see
+[enqueue acknowledgement deduplication](enqueue-acknowledgement-deduplication.md)
+for duplicate acknowledgements, HTTP 409 conflicts, and retention limits.
 Authentication precedes payload parsing. Malformed JSON, trailing JSON, and
 schema errors return a JSON validation envelope with HTTP 400; missing or wrong
 bearer credentials return the matching HTTP 401 envelope.
 
-HTTP 201 (`data: true`, message `Deployment Queued`) acknowledges insertion, not
-deployment completion. The installed BullMQ worker applies this policy to jobs
-from either producer:
+HTTP 201 (`data: true`, message `Deployment Queued`) acknowledges a newly inserted
+or already retained matching job, not deployment completion. The installed
+BullMQ worker applies this policy to jobs from either producer:
 
 | Behavior            | Policy                                                |
 | ------------------- | ----------------------------------------------------- |
@@ -55,10 +58,10 @@ checks.
 
 A failed/timed-out acknowledgement can be uncertain: Redis may have accepted a
 write before the reply was lost or delayed. HTTP 503 does **not** prove that no
-job exists. This compatibility increment does not add enqueue idempotency or
-durable dispatch recovery. Inspect the deployment and queue before manually
-resubmitting uncertain work; those recovery guarantees belong to the subsequent
-enqueue/admission tickets. Do not clear the queue to recover an outage.
+job exists. Retry the same payload to acknowledge the same work while its job
+record is retained. Durable admission/dispatch recovery and execution
+reconciliation after job eviction remain separate lifecycle responsibilities.
+Do not clear the queue to recover an outage.
 
 ## Running the contract suite
 
