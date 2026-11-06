@@ -37,7 +37,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import toast from "../toast/toast";
 import { PublicationPanel } from "./publication-panel";
 import { deploymentStatusLabel } from "@/utils/deployment-status";
-import { clearDeploymentSubmissionId, getDeploymentSubmissionId } from "@/utils/deployment-submission";
+import { useDeploymentSubmission } from "@/utils/use-deployment-submission";
 import { CleanupStatus } from "./cleanup-status";
 import {
   appendLiveLog,
@@ -54,7 +54,8 @@ export default function AppDetails({ appId }: { appId: number }) {
   const trpc = useTRPC(); const client = useQueryClient(); const router = useRouter(); const search = useSearchParams();
   const { data: app, isLoading, isError } = useQuery({ ...trpc.app.get.queryOptions({ appId }), refetchInterval: 2_500 });
   const { data: dispatches } = useQuery({ ...trpc.deployment.dispatches.queryOptions({ appId }), refetchInterval: 2_500 });
-  const [isResolvingSubmission, setIsResolvingSubmission] = useState(false);
+  const submission = useDeploymentSubmission(`redeploy:${appId}`, "Redeployment queued");
+  const isResolvingSubmission = submission.isResolving;
   const { data: retirement } = useQuery({ ...trpc.app.retirementStatus.queryOptions({ appId }), enabled: isError, retry: false });
   const [initialSelection, setInitialSelection] = useState<{ appId: number; deploymentId: number }>();
   const newestDeploymentId = app?.deployments.reduce((id, deployment) => Math.max(id, deployment.id), 0);
@@ -74,56 +75,24 @@ export default function AppDetails({ appId }: { appId: number }) {
     deploymentId: number;
     message: string;
   }) => {
-    if (result.outcome !== "uncertain")
-      clearDeploymentSubmissionId(`redeploy:${appId}`);
+    submission.present(result);
     setNeedsRedeploy(false);
     void refresh();
     void client.invalidateQueries({
       queryKey: trpc.deployment.dispatches.queryKey({ appId }),
-    });
-    toast({
-      title:
-        result.outcome === "accepted"
-          ? "Redeployment queued"
-          : result.outcome === "rejected"
-            ? "Dispatch rejected"
-            : "Deployment saved; confirmation pending",
-      description: result.message,
-      variant: result.outcome === "accepted" ? "success" : "warning",
     });
     router.replace(`?deployment=${result.deploymentId}`);
   };
   const redeploy = useMutation({
     ...trpc.app.redeploy.mutationOptions(),
     onSuccess: showSubmission,
-    onError: () =>
-      toast({
-        title: "Could not confirm submission",
-        description:
-          "Its outcome is unknown. Retry to check the same submission; your retry will keep its identity.",
-        variant: "warning",
-      }),
+    onError: submission.unconfirmed,
   });
   const startRedeployment = async () => {
-    setIsResolvingSubmission(true);
-    const submissionId = getDeploymentSubmissionId(`redeploy:${appId}`);
-    try {
-      const existing = await client.fetchQuery({
-        ...trpc.deployment.submission.queryOptions({ submissionId }),
-        staleTime: 0,
-      });
-      if (existing) showSubmission(existing);
-      else redeploy.mutate({ appId, submissionId });
-    } catch {
-      toast({
-        title: "Could not confirm submission",
-        description:
-          "Retry to check the same submission when the service returns.",
-        variant: "warning",
-      });
-    } finally {
-      setIsResolvingSubmission(false);
-    }
+    const resolved = await submission.resolve();
+    if (!resolved) return;
+    if (resolved.result) showSubmission(resolved.result);
+    else redeploy.mutate({ appId, submissionId: resolved.submissionId });
   };
 
   if (retirement?.resourceStatus === "inactive") return <section className="glass-panel mx-auto max-w-2xl space-y-4 p-8"><h1 className="text-xl font-semibold">{retirement.appName} retired</h1><p className="text-sm text-muted-foreground">The project and sibling apps remain available.</p><p role="status">{retirement.retirement?.message ?? "Runtime cleanup pending. Retry cleanup to recover."}</p><div className="flex gap-3">{retirement.retirement?.status !== "complete" && <Button disabled={removeApp.isPending} onClick={() => removeApp.mutate({ appId })}>{removeApp.isPending ? "Retrying cleanup?" : "Retry cleanup"}</Button>}<Button asChild variant="outline"><Link href="/projects">Back to projects</Link></Button></div></section>;

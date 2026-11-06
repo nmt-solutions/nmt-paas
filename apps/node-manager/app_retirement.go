@@ -59,11 +59,19 @@ func appRetirementHandler(client *http.Client) gin.HandlerFunc {
 		}
 		owns := func(item retirementContainer) bool {
 			id := item.Labels["nmt.deployment-id"]
-			return item.Labels["nmt.app-id"] == strconv.FormatInt(appID, 10) && item.Labels["nmt.artifact"] == "runtime" && allowed[id]
+			role, explicitRole := item.Labels["nmt.artifact"]
+			legacyName := item.Name == "/deployment-"+id
+			for _, name := range item.Names {
+				legacyName = legacyName || name == "/deployment-"+id
+			}
+			// bb3f873 runtimes carried both ownership labels and this exact
+			// name, but no role label. An explicit conflicting role is never legacy.
+			return item.Labels["nmt.app-id"] == strconv.FormatInt(appID, 10) && allowed[id] && (role == "runtime" || !explicitRole && legacyName)
 		}
 		complete := true
 		for _, item := range containers {
-			candidate := item.Labels["nmt.app-id"] == strconv.FormatInt(appID, 10) && item.Labels["nmt.artifact"] == "runtime"
+			role, explicitRole := item.Labels["nmt.artifact"]
+			candidate := item.Labels["nmt.app-id"] == strconv.FormatInt(appID, 10) && (role == "runtime" || !explicitRole && allowed[item.Labels["nmt.deployment-id"]])
 			for _, name := range item.Names {
 				candidate = candidate || allowed[strings.TrimPrefix(name, "/deployment-")] && strings.HasPrefix(name, "/deployment-")
 			}

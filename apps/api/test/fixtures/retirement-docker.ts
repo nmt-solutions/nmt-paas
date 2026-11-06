@@ -68,7 +68,12 @@ export async function retirementDockerFixture() {
     failures,
     changedOwnership,
     disappear,
-    seed(appId: number, deploymentId: number, id = `runtime-${deploymentId}`) {
+    seed(
+      appId: number,
+      deploymentId: number,
+      id = `runtime-${deploymentId}`,
+      overrides: Partial<Container> = {},
+    ) {
       containers.set(id, {
         Id: id,
         Names: [`/deployment-${deploymentId}`],
@@ -78,6 +83,7 @@ export async function retirementDockerFixture() {
           "nmt.deployment-id": String(deploymentId),
           "nmt.artifact": "runtime",
         },
+        ...overrides,
       });
       return id;
     },

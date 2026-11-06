@@ -24,6 +24,25 @@ export const getDeployment = async (deploymentId: number, userId: string) => {
   });
 };
 
+// Operator cleanup only: expose the recorded ledger and its coordination/start
+// identity, never app configuration, environment, logs or deploy/publication data.
+// No lifecycle filter is relaxed on the ordinary deployment reader.
+export const getRecordedDeploymentCleanup = async (
+  deploymentId: number,
+  userId: string,
+) => {
+  const record = await database.query.Deployments.findFirst({
+    where: {
+      id: deploymentId,
+      userId,
+      createdBy: userId,
+      app: { createdBy: userId, project: { userId, createdBy: userId } },
+    },
+    columns: { appId: true, userId: true, status: true, cleanup: true },
+  });
+  return record?.cleanup ? record : undefined;
+};
+
 export const createDeployment = async (
   params: InferInsertModel<typeof Deployments>,
 ) => {

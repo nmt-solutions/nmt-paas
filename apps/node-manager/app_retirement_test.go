@@ -111,6 +111,83 @@ type retirementTransport struct {
 	inner http.RoundTripper
 }
 
+func TestAppRetirementVerifiesLegacyOwnership(t *testing.T) {
+	containers := map[string]retirementContainer{}
+	seed := func(id, name string, labels map[string]string) {
+		containers[id] = retirementContainer{ID: id, Names: []string{name}, Name: name, Labels: labels}
+	}
+	seed("legacy", "/deployment-41", map[string]string{"nmt.app-id": "7", "nmt.deployment-id": "41"})
+	seed("builder", "/builder-42", map[string]string{"nmt.deployment-id": "42", "nmt.artifact": "builder"})
+	seed("sibling", "/deployment-43", map[string]string{"nmt.app-id": "8", "nmt.deployment-id": "43"})
+	changed := false
+	docker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/containers/json" {
+			items := []retirementContainer{}
+			for _, item := range containers {
+				items = append(items, item)
+			}
+			json.NewEncoder(w).Encode(items)
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/containers/"), "/json")
+		item, ok := containers[id]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		if r.Method == "GET" {
+			labels := item.Labels
+			if changed && id == "legacy" {
+				labels = map[string]string{"nmt.app-id": "8", "nmt.deployment-id": "41"}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"Id": id, "Name": item.Name, "Config": map[string]any{"Labels": labels}})
+			return
+		}
+		if r.Method == "DELETE" && id == "legacy" && r.URL.Query().Get("v") == "false" {
+			delete(containers, id)
+			w.WriteHeader(204)
+			return
+		}
+		t.Errorf("unrelated Docker operation: %s %s", r.Method, r.URL)
+		w.WriteHeader(500)
+	}))
+	defer docker.Close()
+	client := docker.Client()
+	client.Transport = &retirementTransport{base: docker.URL, inner: http.DefaultTransport}
+	router := gin.New()
+	router.Use(requireAPIAuth("legacy-key"))
+	router.POST("/apps/:appId/retire", appRetirementHandler(client))
+	send := func(ids string, complete bool) {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/apps/7/retire", strings.NewReader(`{"deploymentIds":`+ids+`}`))
+		req.Header.Set("Authorization", "Bearer legacy-key")
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != 200 || !strings.Contains(res.Body.String(), fmt.Sprintf(`"complete":%t`, complete)) {
+			t.Fatal(res)
+		}
+	}
+	changed = true
+	send("[41,42]", false)
+	changed = false
+	send("[41,42]", true)
+	send("[41,42]", true)
+	if _, ok := containers["legacy"]; ok {
+		t.Fatal("legacy runtime remains")
+	}
+	seed("foreign", "/deployment-44", map[string]string{"nmt.app-id": "8", "nmt.deployment-id": "44"})
+	seed("unverified", "/deployment-45", map[string]string{"traefik.http.routers.deployment-45.rule": "Host(`fixture.invalid`)"})
+	seed("conflict", "/deployment-46", map[string]string{"nmt.app-id": "7", "nmt.deployment-id": "46", "nmt.artifact": "builder"})
+	seed("wrong-name", "/other-47", map[string]string{"nmt.app-id": "7", "nmt.deployment-id": "47"})
+	send("[44,45,46,47]", false)
+	for _, id := range []string{"builder", "sibling", "foreign", "unverified", "conflict", "wrong-name"} {
+		if _, ok := containers[id]; !ok {
+			t.Fatalf("unverified container %s removed", id)
+		}
+	}
+}
+
 func (r *retirementTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	copy := req.Clone(req.Context())
 	u := *req.URL

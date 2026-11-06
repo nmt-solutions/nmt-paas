@@ -842,6 +842,7 @@ test(
       userInfo: userInfos.get("ui-owner"),
       caller,
       appId: first.appId,
+      importInput: input,
       setHostMode: (mode: typeof hostMode) => {
         hostMode = mode;
       },

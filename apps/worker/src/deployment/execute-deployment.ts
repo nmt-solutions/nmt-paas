@@ -17,7 +17,7 @@ export type DeploymentRequest = {
   userId: string;
   deploymentId: number;
   action?: "cleanup";
-  operation?: "publish";
+  operation?: "publish" | "cleanup";
 };
 
 class DeploymentNotFoundError extends Error {
@@ -58,6 +58,11 @@ type DeploymentSnapshot = {
   } | null;
 };
 
+type CleanupSnapshot = Pick<
+  DeploymentSnapshot,
+  "appId" | "userId" | "status" | "cleanup"
+>;
+
 export type PublicationRecord = {
   deploymentId: number;
   imageId: string;
@@ -88,6 +93,10 @@ export type DeploymentExecutionDependencies = {
     id: number,
     userId: string,
   ) => Promise<DeploymentSnapshot | undefined>;
+  getRecordedDeploymentCleanup?: (
+    id: number,
+    userId: string,
+  ) => Promise<CleanupSnapshot | undefined>;
   saveDeploymentCleanup: (
     id: number,
     cleanup: DeploymentCleanup,
@@ -140,6 +149,7 @@ type DeploymentContainer = {
 export const createDeploymentExecutor = ({
   withAppLifecycleLock = async (_appId, operation) => operation(),
   getDeployment,
+  getRecordedDeploymentCleanup = getDeployment,
   saveDeploymentCleanup,
   getPublication,
   recordPublication,
@@ -393,7 +403,7 @@ export const createDeploymentExecutor = ({
 
   const cleanupArtifacts = async (
     docker: Docker,
-    deployment: DeploymentSnapshot,
+    deployment: CleanupSnapshot,
     deploymentId: number,
     userId: string,
     targets: DeploymentCleanupArtifact[] = [],
@@ -557,6 +567,28 @@ export const createDeploymentExecutor = ({
         }).catch((logError) => console.error(safeDiagnosticError(logError)));
       }
     }
+    return cleanup;
+  };
+
+  const recoverCleanup = async (
+    current: CleanupSnapshot,
+    deploymentId: number,
+    userId: string,
+  ) => {
+    const cleanup = await cleanupArtifacts(
+      await getCleanupDocker(),
+      current,
+      deploymentId,
+      userId,
+    );
+    await createDeploymentLogs({
+      deploymentId,
+      createdBy: userId,
+      message:
+        cleanup.status === "complete"
+          ? "Cleanup complete. Runtime-start outcome unchanged."
+          : "Cleanup incomplete; retry cleanup after resolving the removal error. Runtime-start outcome unchanged.",
+    });
     return cleanup;
   };
 
@@ -1067,6 +1099,32 @@ export const createDeploymentExecutor = ({
     withDeploymentDiagnostics(async () => {
       registerDiagnosticSecrets(registry.password);
 
+      if (operation === "cleanup") {
+        // Only the OS-authorized operator selects this operation. Read again
+        // under the same lifecycle lock as execution/retirement before Docker.
+        try {
+          const recorded = await getRecordedDeploymentCleanup(
+            deploymentId,
+            userId,
+          );
+          if (!recorded || recorded.userId !== userId)
+            throw new Error("Deployment not found for cleanup owner");
+          return await withAppLock(recorded.appId, () =>
+            withAppLifecycleLock(recorded.appId, async () => {
+              const current = await getRecordedDeploymentCleanup(
+                deploymentId,
+                userId,
+              );
+              if (!current || current.userId !== userId || !current.cleanup)
+                throw new Error("Deployment not found for cleanup owner");
+              return recoverCleanup(current, deploymentId, userId);
+            }),
+          );
+        } catch (failure) {
+          throw safeDiagnosticError(failure);
+        }
+      }
+
       if (operation === "publish" && action !== "cleanup") {
         // Recovery has its own outcome. It never enters deployment finalization,
         // starts a container, or retires a runtime (including a newer release).
@@ -1136,8 +1194,10 @@ export const createDeploymentExecutor = ({
         deployment = await getDeployment(deploymentId, userId);
         if (!deployment) throw new DeploymentNotFoundError();
       } catch (failure) {
-        if (action === "cleanup") throw safeDiagnosticError(failure);
-        return reportFailure(failure);
+        // Without an authoritative snapshot, neither ownership nor a previous
+        // start outcome is known. Do not overwrite persisted status on a read
+        // outage; the delivery can retry when persistence returns.
+        throw safeDiagnosticError(failure);
       }
       const attempt = async () => {
         if (action === "cleanup") {
@@ -1151,30 +1211,17 @@ export const createDeploymentExecutor = ({
               throw new Error(
                 "No recorded cleanup; recover deployment execution before retrying cleanup",
               );
-            const cleanup = await cleanupArtifacts(
-              await getCleanupDocker(),
-              current,
-              deploymentId,
-              userId,
-            );
-            await createDeploymentLogs({
-              deploymentId,
-              createdBy: userId,
-              message:
-                cleanup.status === "complete"
-                  ? "Cleanup complete. Runtime-start outcome unchanged."
-                  : "Cleanup incomplete; retry cleanup after resolving the removal error. Runtime-start outcome unchanged.",
-            });
-            return cleanup;
+            return await recoverCleanup(current, deploymentId, userId);
           } catch (failure) {
             throw safeDiagnosticError(failure);
           }
         }
-        let runtimeStarted = false;
+        let runtimeStarted = deployment?.status === "success";
         try {
           // Recheck inside the existing app turn, before touching Docker.
           deployment = await getDeployment(deploymentId, userId);
           if (!deployment) throw new DeploymentNotFoundError();
+          runtimeStarted ||= deployment.status === "success";
           await deploy(userId, deploymentId, deployment, () => {
             runtimeStarted = true;
           });

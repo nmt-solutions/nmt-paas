@@ -27,6 +27,36 @@ test("execution can be imported without credentials, infrastructure, or a queue 
   assert.equal(result.stdout.trim(), "execution imported");
 });
 
+test("a fresh executor preserves a recorded start when acquisition fails before runtime discovery", async (t) => {
+  const fixture = await deploymentFixture();
+  t.after(fixture.close);
+  await createDeploymentExecutor(fixture.dependencies)({
+    userId,
+    deploymentId,
+  });
+  const before = await fixture.docker.getContainer("deployment-42").inspect();
+  await assert.rejects(
+    createDeploymentExecutor({
+      ...fixture.dependencies,
+      getDocker: async () => {
+        throw new Error("Docker acquisition unavailable fixture-pat");
+      },
+    })({ userId, deploymentId }),
+    /acquisition unavailable \[REDACTED\]/,
+  );
+  assert.equal(
+    (await fixture.database.getDeployment(deploymentId))?.status,
+    "success",
+  );
+  const after = await fixture.docker.getContainer(before.Id).inspect();
+  assert.equal(after.Id, before.Id);
+  assert.equal(after.State.Running, true);
+  assert.doesNotMatch(
+    JSON.stringify(await fixture.database.getLogs(deploymentId)),
+    /fixture-pat/,
+  );
+});
+
 test("a production deployment starts its image and replaces only its previous runtime", async (t) => {
   const fixture = await deploymentFixture();
   t.after(fixture.close);

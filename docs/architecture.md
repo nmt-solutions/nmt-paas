@@ -1,276 +1,86 @@
-# NMT Deploy architecture
+﻿# NMT Deploy architecture
 
-Reviewed on 2026-11-05 against commit `d3b6f23` and the working tree. This is a reference for navigating and changing the repository. It describes the implementation found in source; infrastructure availability and deployment health were not checked.
+Maintained implementation reference, updated 2026-11-06 after the lifecycle program and its review fixes. The accepted [improvement spec](architecture-improvement-spec.md), [ticket breakdown](architecture-tickets.md) and [suggested architecture](suggested-architecture.md) retain their historical decisions. This describes current source behavior; it does not establish infrastructure availability or deployment health.
 
-## Start here
+## Runtime and repository map
 
-NMT Deploy is a self-hosted PaaS that imports GitHub repositories, builds them in Docker, and routes requests to deployment containers. The Next.js application owns user workflows and most database access. A control-plane HTTP interface queues deployments and exposes Docker operations. A separate TypeScript worker executes deployments.
+NMT Deploy imports GitHub repositories, builds them in Docker, and routes public traffic through Traefik. The supplied Docker service named `api` runs the **Go node manager**. Express remains the compatible npm development implementation.
 
-**The Docker service named `api` currently runs the Go node manager.** The Express application in `apps/api` implements the same HTTP interface and remains available through npm development commands, but its Dockerfile is not selected by the active Compose definition. See [control-plane implementations](#control-plane-implementations) before changing either.
-
-Use the [change map](#change-map) to find the relevant files. Source files and manifests take precedence when they diverge from this reference or the root README.
-
-## Repository map
-
-| Location                                                                                                                               | Responsibility and entry points                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`apps/web`](../apps/web/package.json)                                                                                                 | Next.js 16.2.6 / React 19.2.4 application; pages, WorkOS authentication, tRPC procedures, GitHub integration, and deployment orchestration.           |
-| [`apps/node-manager`](../apps/node-manager/main.go)                                                                                    | Go / Gin implementation of the control-plane HTTP interface; direct Redis and Docker Engine communication. Built by the active `api` Compose service. |
-| [`apps/api`](../apps/api/src/index.ts)                                                                                                 | Express implementation of the control-plane HTTP interface; uses `@repo/queues` and Dockerode.                                                        |
-| [`apps/worker`](../apps/worker/src/index.ts)                                                                                           | BullMQ consumer; imports the active [`deployment.worker.ts`](../apps/worker/src/workers/deployment.worker.ts).                                        |
-| [`packages/database`](../packages/database/package.json)                                                                               | PostgreSQL pool, Drizzle schema and relations, migrations, and data-access functions.                                                                 |
-| [`packages/api-sdk`](../packages/api-sdk/src/client.ts)                                                                                | Server-side `ControlPanelAPIClient`, response types, and queue-request validation schema.                                                             |
-| [`packages/queues`](../packages/queues/src/index.ts)                                                                                   | TypeScript producer for `deployment-queue`, including job retry and retention options.                                                                |
-| [`packages/redis`](../packages/redis/src/index.ts)                                                                                     | Shared IORedis connection used by the TypeScript queue producer and worker.                                                                           |
-| [`packages/docker`](../packages/docker)                                                                                                | Separate Compose projects for Traefik, Redis, worker, API, and Cloudflare Tunnel. This directory has no npm package manifest.                         |
-| [`packages/typescript-config`](../packages/typescript-config/base.json), [`packages/eslint-config`](../packages/eslint-config/base.js) | Shared compiler and lint configuration.                                                                                                               |
-| [`scripts`](../scripts)                                                                                                                | Environment-file copying, Docker orchestration, and destructive reset tooling.                                                                        |
-| [`.agents/skills`](../.agents/skills), [`skills-lock.json`](../skills-lock.json)                                                       | Project-local agent skills and their source lock; separate from application runtime dependencies.                                                     |
+| Location                            | Responsibility                                                                                                                    |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`                          | Next.js 16.2.6 / React 19.2.4, WorkOS sessions, authenticated tRPC workflows, GitHub, admission, retirement and dispatch recovery |
+| `apps/node-manager`                 | Authoritative Go/Gin host HTTP, private BullMQ-compatible Redis encoding, Docker HTTP and runtime streams                         |
+| `apps/api`                          | Compatible Express host HTTP using Dockerode and the TypeScript queue producer                                                    |
+| `apps/worker`                       | BullMQ registration, importable deployment executor, Docker/build adapters and cleanup operator                                   |
+| `packages/database`                 | PostgreSQL/Drizzle schema, migrations, ownership/active reads and independent recovery records                                    |
+| `packages/api-sdk`                  | Server-held host client; browser-safe typed runtime-log subpath                                                                   |
+| `packages/queues`, `packages/redis` | TypeScript producer and IORedis connection                                                                                        |
+| `packages/docker`                   | Separate Compose projects for Go API, worker, Redis, Traefik and optional Cloudflare Tunnel                                       |
+| `scripts`                           | Local orchestration, redacted setup diagnostics and separately guarded destructive reset tooling                                  |
 
-The root [package manifest](../package.json) defines npm workspaces under `apps/*` and `packages/*`, with Turborepo task orchestration in [`turbo.json`](../turbo.json). The Go application has a `go.mod` rather than a `package.json`, so npm and Turbo tasks do not build or start it.
+Web and PostgreSQL run separately from the supplied Compose projects. Web calls the host through server-side `ControlPanelAPIClient` with `API_KEY`; `API_BASE_URL` includes `/api/v1`. Host and worker share Docker. Redis delivers work to the worker; execution outcomes return through PostgreSQL. Containers share external `app-network`. Traefik publishes port 80. TLS/tunnel ingress and a reachable API URL are operator configuration. There is no host scheduler or remote-worker selection. npm/Turbo does not build or start Go.
 
-## Runtime topology
+## Authentication and persistence
 
-```text
-Browser
-  | WorkOS session; tRPC queries/mutations; runtime-log stream
-  v
-Next.js web process ----------------------> WorkOS / GitHub App APIs
-  |                     |
-  | Drizzle / pg        | ControlPanelAPIClient, Bearer API_KEY
-  v                     v
-PostgreSQL        /api/v1 control-plane interface
-  ^                Go node manager in Compose
-  |                Express app in npm dev mode
-  |                     |                 |
-  |                     | queue           | admin operations / live logs
-  |                     v                 v
-  |                Redis / BullMQ     Docker Engine
-  |                     |                 ^
-  +------ TypeScript deployment worker ---+
-                          |               |
-                          v               v
-                     GitHub clone     builder container
-                                          |
-                                    committed image --> GHCR push
-                                          |
-                                    deployment container
-                                          ^
-                                          |
-Public traffic --> Cloudflare Tunnel* --> Traefik :80
+WorkOS identifies users. User workflows require authenticated tRPC procedures and ownership checks; host-wide Docker administration additionally requires the separate `admin` permission. The host bearer authenticates the web control plane, not a browser user. The browser never receives it. GitHub completion validates the user's pending connection attempt and verifies installation access through user authorization. See [GitHub ownership](github-connection-ownership.md).
 
-* Tunnel ingress configuration is external to this repository.
-```
+Runtime PostgreSQL selection and Drizzle migration selection both use `DB_ENV` (`development` by default): development selects `DEV_DATABASE_URL`, production selects `PROD_DATABASE_URL`. `APP_ENV` does not choose the database. Both URLs must validate even though only the selected database is connected. Development SQL/snapshots are checked in; there is no checked-in production migration directory. Use the existing release process for the selected environment; the runtime selector does not supply production migration files. See [database selection](database-environment-selection.md).
 
-PostgreSQL is external to the supplied Compose projects. The web application also runs separately; there is no web Compose definition. The supplied containers and deployed applications share the external Docker network `app-network`. The API process and worker access the same Docker daemon through its socket; there is no node registry, host scheduler, or remote-worker selection in the implementation.
+Core tables are `Projects`, `Apps`, `AppDomains`, `FrameworkConfig`, `Deployments`, `DeploymentLogs`, `EnvVars` and `GithubAppInstallations`. Additional lifecycle state:
 
-## Web module
+| State                    | Purpose                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `DeploymentDispatches`   | Durable intent, owner/submission UUID, HMAC request fingerprint, attempts and leased recovery |
+| `Deployments.cleanup`    | Nullable immutable artifact ledger with ownership, per-target outcomes and redacted errors    |
+| `DeploymentPublications` | Immutable local image/reference and independent publication status                            |
+| `Apps.retirement`        | Nullable pending/complete runtime cleanup, separate from visibility and deployment cleanup    |
 
-### Routes and presentation
+Apply the complete ordered migration chain. Preserve applied SQL, identifiers and historical rows. No recovery outcome is inferred for rows without a record. Ordinary reads require eligible active deployment/app/project ancestry and ownership; eligible children are filtered too. The historical cleanup reader exposes only coordination identity, recorded start status and the ledger to the operator path. It does not reopen ordinary reads, admission, publication or logs. See [eligibility](active-resource-eligibility.md).
 
-The route tree is under [`apps/web/src/app`](../apps/web/src/app). [`routes.ts`](../apps/web/src/routes.ts) supplies route metadata for navigation and authentication, while [`app-sidebar-provider.tsx`](../apps/web/src/providers/app-sidebar-provider.tsx) selects the console shell.
+## Admission and dispatch
 
-| Route                                | Main behavior                                                                                                                                                                                                        |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/`                                  | Public landing page with session-aware sign-in or console links.                                                                                                                                                     |
-| `/dashboard`                         | Derives app totals and deployment success counts from `project.list`. Its availability percentage is a deployment success ratio.                                                                                     |
-| `/projects`                          | Lists the user's projects and applications; supports project deletion.                                                                                                                                               |
-| `/projects/new`                      | Checks GitHub connectivity and lists repositories with search and client-side pagination.                                                                                                                            |
-| `/projects/new/import/[repoId]`      | Loads repository details and a framework preset; collects command overrides and initial environment values.                                                                                                          |
-| `/projects/[projectId]/apps/[appId]` | Application details, configuration, environment keys, deployment history, logs, redeploy, and app deletion. Data lookup uses `appId` and the authenticated user; the route's `projectId` is not a lookup constraint. |
-| `/connect/github`                    | Consumes GitHub's `installation_id` and `state` callback parameters.                                                                                                                                                 |
-| `/admin`                             | Host metrics and Docker inventory/deletion through procedures requiring the `admin` permission.                                                                                                                      |
+[`services/projects.ts`](../apps/web/src/services/projects.ts) and the deployment/app tRPC routers own admission. First import honors the submitted project name and branch. GitHub metadata/commit resolution happens before the database transaction. Related project/app/domain/config/encrypted-environment/deployment/dispatch writes commit atomically. Redeploy resolves a fresh head of the latest deployment's branch using stable numeric repository identity; it is not rollback.
 
-The active application-detail implementation is [`components/apps/app-details.tsx`](../apps/web/src/components/apps/app-details.tsx); import behavior lives in [`components/repositories/import-repository.tsx`](../apps/web/src/components/repositories/import-repository.tsx). UI primitives live in `components/ui`, with Tailwind CSS 4 theme tokens in [`globals.css`](../apps/web/src/app/globals.css), Radix primitives, Sonner notifications, and `next-themes`. [`components.json`](../apps/web/components.json) records the shadcn configuration. `next.config.ts` enables the React compiler.
+Accepted work has a durable deployment and submission UUID. Identical replay returns the same intent; a conflicting request fingerprint is rejected. Browser retention stores only the UUID, including uncertain retries and remounts. Import and redeploy share lookup, identity lifetime and outcome presentation, with mutations/navigation local to each screen. UI distinguishes queued acceptance, saved but uncertain confirmation and explicit dispatch rejection. A response timeout is not proof of non-acceptance. See [first import](first-import-operations.md) and [durable dispatch](deployment-dispatch-recovery.md).
 
-The chart, section-card, and data-table examples under `components/charts`, `components/cards`, and `components/table` are not wired into the current dashboard. Empty `services/apps.ts`, `services/deployment.ts`, and `services/framework.ts` are placeholders; active orchestration lives elsewhere.
+The existing long-lived Node web startup hook recovers immediately and five seconds after each completed pass. It leases at most ten due records with `SKIP LOCKED` for 30 seconds, commits before host HTTP, and confirms only its matching lease token. SDK HTTP timeout is 15 seconds. Failed temporary handoffs become due after five seconds. Dispatch takes the app lifecycle lock and rechecks eligibility after waiting. A wait can outlive the lease, allowing repeated handoffs. Serverless suspension is not a supported recovery runner.
 
-### Request flow and authentication
+## Host and queue contract
 
-Client components use `useTRPC()` with TanStack Query. [`trpc/client.tsx`](../apps/web/src/trpc/client.tsx) batches calls to `/api/trpc` and uses SuperJSON. [`trpc/routers/_app.ts`](../apps/web/src/trpc/routers/_app.ts) mounts the `github`, `git`, `framework`, `deployment`, `app`, `project`, and `admin` routers. Routers validate inputs with Zod and call web functions or database access functions directly.
+Both hosts expose public `GET /api/v1/health`; other endpoints require the server bearer. Queue and publication endpoints accept `{ userId, deploymentId }`. Retirement posts recorded deployment IDs to `/api/v1/apps/:appId/retire`. Runtime SSE is `/api/v1/logs/stream/:deploymentId`. `/api/v1/admin/host` and `/api/v1/admin/docker/:resource` remain separately permissioned host-wide operations.
 
-[`trpc/server.tsx`](../apps/web/src/trpc/server.tsx) also provides a server caller, prefetching, and hydration helpers. The main console screens currently fetch through client-side queries. The shared query client defaults to a 30-second stale time; application details explicitly poll every 2.5 seconds, and the admin page refreshes host metrics every 3 seconds.
+Ordinary jobs on `deployment-queue` use a stable deployment-derived identity, three attempts, exponential backoff starting at two seconds (then four), and retention of 100 completed / 1000 failed jobs. Retained duplicate acknowledgements are accepted; conflicting ownership returns 409. Deduplication ends after eviction. Publication-only work has a separate random delivery identity and `operation: "publish"`; ordinary payloads remain compatible. Go's private Lua encoding is checked against the installed BullMQ consumer and Express producer. Endpoint names or Redis command matching alone do not prove compatibility. See [queue operations](queue-compatibility-operations.md) and [acknowledgement deduplication](enqueue-acknowledgement-deduplication.md).
 
-WorkOS AuthKit owns user identity and sessions. [`proxy.ts`](../apps/web/src/proxy.ts) applies route authentication, [`api/auth/login`](../apps/web/src/app/api/auth/login/route.ts) redirects to WorkOS, and [`api/auth/callback`](../apps/web/src/app/api/auth/callback/route.ts) handles the return. No local user table is defined; domain rows carry WorkOS user IDs as strings.
+## Execution and recovery
 
-`/api/trpc` is explicitly allowed through the authentication proxy, so its procedure checks are part of the access-control interface. [`trpc/init.ts`](../apps/web/src/trpc/init.ts) obtains `userInfo` from `withAuth()`. Its `authenticatedProcedure` currently checks the `userInfo` object, while downstream procedures access `userInfo.user.id`; it does not explicitly check `userInfo.user`. `authorizedProdcedure` additionally checks `userInfo.permissions` for the requested permission. Application operations use `requireApp()` in [`app.trpc.ts`](../apps/web/src/trpc/routers/app.trpc.ts) to load an active, owner-scoped app.
+[`deployment.worker.ts`](../apps/worker/src/workers/deployment.worker.ts) registers BullMQ and forwards deliveries to [`production-executor.ts`](../apps/worker/src/deployment/production-executor.ts). The shared executor owns execution/recovery; importing its behavior does not connect Docker or register a consumer. Concurrency is five jobs with per-app FIFO plus a dedicated PostgreSQL lifecycle session lock. Eligibility is reloaded inside the app turn. No database transaction spans Docker or host HTTP.
 
-Data-access functions have different scoping rules. For example, `getUserApp()` checks app ID, creator, and active status; `getDeployment()` only checks deployment ID and active status. Authorization is therefore a caller responsibility wherever the query itself is not user-scoped. The control-plane interface trusts its shared bearer key and does not authenticate WorkOS users.
+1. Acquire local Docker without registry authentication. Reconcile deterministic containers/images by deployment identity and artifact role before building.
+2. Track builder acquisition before preparation, clone using stable numeric repository identity, check out the recorded commit, and install/build in the configured root under `/app`.
+3. Deliver decrypted values through structured command/runtime environment entries. Remove credential-bearing `.git` metadata and generated secret files before image commit.
+4. Commit with the configured root as `WORKDIR` and configured startup command. Create the runtime on `app-network` with app/deployment/runtime and Traefik labels and configured port. Start it before retiring prior runtimes. Explicit app ownership overrides domain fallback in prior selection. `outputDirectory` is stored but not consumed here.
+5. Persist `success`, meaning **Container started**, and immutable publication identity. Await recorded builder/prior-runtime cleanup before acknowledging execution. Attach runtime capture and launch independent background publication.
 
-## Persistence and domain model
+A failed initial build/start reports failure while preserving the previous runtime. Retries adopt artifacts instead of blindly recreating them. Verified or persisted starts survive later acquisition, persistence, cleanup and publication failures. Registry authentication is supplied only during push. Publication has independent persisted status/recovery and cannot demote start success. Cleanup records intent before removal, uses immutable IDs, rechecks ownership/replacement and protects current/adopted runtimes and images.
 
-[`schema.ts`](../packages/database/src/schema.ts) exports table definitions and enums; [`relations.ts`](../packages/database/src/relations.ts) defines Drizzle relational reads. [`access-layer`](../packages/database/src/access-layer) contains data-access functions, exposed through package subpath exports.
+The OS-authorized `cleanup:deployment` operator can inspect/retry an existing ledger after app or project retirement, with recorded owner/creator checks and the same lifecycle lock. It never builds, starts, fetches environment/GitHub, publishes or enqueues. Ordinary queued cleanup remains active-only. See [execution entry point](deployment-execution-entry-point.md), [repository context](deployment-repository-context.md), [retry recovery](deployment-retry-recovery.md), [cleanup recovery](deployment-cleanup-recovery.md), [publication recovery](deployment-image-publication.md) and [environment/credentials](deployment-environment-credentials.md).
 
-| Table                    | Meaning and relationships                                                                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GithubAppInstallations` | Connects a user to a GitHub App installation; contains an installation ID and `started` / `completed` state.                                                          |
-| `Projects`               | User-owned grouping of apps and environment values.                                                                                                                   |
-| `Apps`                   | A repository-backed application belonging to a project; stores mutable `appName`, repository ID, and Git provider.                                                    |
-| `AppDomains`             | App hostnames for `production` and `preview`; domain strings have a uniqueness constraint.                                                                            |
-| `FrameworkConfig`        | Commands, root/output directories, framework name, and port for an app. Drizzle reads it as one-to-one, although `appId` has no foreign-key or uniqueness constraint. |
-| `Deployments`            | A release attempt containing app/repository IDs, branch, exact commit SHA, environment, user, and status.                                                             |
-| `DeploymentLogs`         | Persisted messages belonging to a deployment.                                                                                                                         |
-| `EnvVars`                | Encrypted values keyed by project and environment. App settings manage these through the app's project. There is no unique constraint on project/environment/key.     |
+This remains a single-host, one-worker-per-host model. Locks do not establish distributed-worker support or exactly-once execution. There is no readiness probe, health-based rollback or zero-downtime guarantee. The programmatic Node builder is used even for Docker presets; the builder Dockerfile and `deployment.worker.old*` are not active paths. Interrupted background publication needs explicit recovery; it is not scanned automatically. Filesystem fixtures do not prove real Docker image-layer secret exclusion. See [start guarantee](deployment-container-start.md), [failed cleanup](failed-deployment-cleanup.md) and [redaction](diagnostic-redaction.md).
 
-Projects can contain multiple apps in the schema, but the initial import flow creates a new project for each app. Domain creation inserts a production hostname and a preview hostname, adding a readable random suffix on a name collision. Both environments are represented in the schema; current deployment creation always chooses `production`. GitHub is the implemented provider even though the database enum also includes `bitbucket`.
+## Retirement and logs
 
-Tables carry audit columns and `resourceStatus: active | inactive`. Deletion generally updates this status. Relational includes do not uniformly filter inactive child rows, so a parent query's active filter is not a guarantee that every returned child is active.
+App retirement atomically hides the app, domains and deployments and records pending cleanup while preserving its project, shared environment values and siblings. Project retirement takes project lock namespace `2222`, then child app namespace `2121` in ascending ID order on one dedicated session. It commits all visibility together and releases that complete lock set before invoking each app's normal cleanup. Both workflows share the transaction-scoped child transition. Dedicated wait sessions stay outside the query pool; budget connections accordingly.
 
-The runtime pool in [`src/index.ts`](../packages/database/src/index.ts) **always connects to `DEV_DATABASE_URL`**. [`drizzle.config.ts`](../packages/database/drizzle.config.ts) selects the migration database and output directory using `DB_ENV`. Consequently, setting `DB_ENV=production` changes migration targeting but does not change the runtime pool. The checked-in migration is under [`database/development`](../packages/database/database/development); there is no checked-in production migration directory in this snapshot.
+Host cleanup lists and re-inspects immutable container IDs. It accepts matching app/deployment/runtime labels, or the exact pre-upgrade `deployment-{id}` name with both matching ownership labels and no role label. Conflicting roles, changed ownership and name/domain-only guesses never grant deletion. Builders, images, volumes, networks and unrelated resources stay outside runtime retirement. 404 is complete; partial removal/lost acknowledgements remain pending. Owner-only retired app/project views allow refresh/restart and idempotent retry. Foreign children stay private and keep aggregate cleanup pending. Recovery never reactivates visibility. See [app retirement](app-retirement-operations.md) and [project retirement](project-retirement-operations.md).
 
-## GitHub integration and deployment requests
+App metadata polling does not eagerly load logs. Selected history uses an owner/active-scoped cursor reader: 100 records by default, 200 maximum, 4096 PostgreSQL characters/message and explicit clipping. New releases do not replace selected history or scroll position. Live output retains at most 1000 lines / 131072 UTF-16 units with truncation indicated. These bounds do not cap total metadata, database retention or Docker retention.
 
-### Connect and inspect repositories
+The server-only runtime route selects an eligible successful runtime and forwards typed SSE with explicit identity, decoded text, errors and termination. Both hosts reconstruct Docker framing, fragmented UTF-8 and partial lines. EOF/cancellation releases readers and heartbeat work. Subscriptions stay pinned to their starting runtime; reconnect identifies the current runtime. Docker tail is 100 lines; SSE heartbeat is 15 seconds. Worker persistence is an in-process attachment, not a restart-restored collector. See [typed logs](runtime-log-protocol-and-reconnect.md), [subscription lifetime](runtime-log-subscription-lifecycle.md) and [bounded history](bounded-deployment-log-history.md).
 
-[`github.trpc.ts`](../apps/web/src/trpc/routers/github.trpc.ts) creates an installation row and redirects to the configured GitHub App with that row's ID in `state`. The callback verifies that the supplied installation can be accessed with the App credentials and writes its installation ID. It currently updates by the supplied row ID without an ownership predicate, and does not change the installation's `state` field to `completed`.
+## Change and verification reference
 
-[`services/github.ts`](../apps/web/src/services/github.ts) obtains installation-scoped Octokit clients, lists repositories, resolves commits, and detects framework presets. Repository listing makes one GitHub request; UI pagination is local to the returned results. Repository-plus-preset lookup infers the owner from the installation account.
+Change admission with `services/projects.ts`, dispatch DAL/recovery and both submission screens; execution with the executor, production wiring and Docker adapters; retirement with both DALs, their shared transition and both host handlers. Queue identity/policy changes need both producers and the real BullMQ suite. Schema changes require the full migration chain and physical upgrade evidence.
 
-Framework detection examines the repository root on the requested branch. It prefers a root Dockerfile, then package/config evidence for Next.js, Vite, and React, with fallback presets. Command defaults are in [`constants/frameworks.ts`](../apps/web/src/constants/frameworks.ts). Detection does not recursively discover workspace applications. In particular, the Next.js preset defaults its root directory to `apps/web`, which must be reviewed for each imported repository.
+Root build/lint/type commands use Turbo and compiled dependency `dist` exports. Web/worker/API scripts exercise authenticated requests, owner UI in JSDOM, execution, recovery and host streams. `npm run test:queue` exercises both hosts with local Redis/BullMQ. Run Go test/vet/build separately using declared Go 1.27.1. Local workflows use disposable PostgreSQL/Redis. Docker HTTP/provider fixtures do not establish real-daemon or live-registry compatibility. Real Docker, live providers/registry, Linux-native/race and distributed-worker operation require separate evidence. Opt-in Docker smoke suites remain available.
 
-### Create and enqueue a deployment
-
-The principal orchestration module is [`services/projects.ts`](../apps/web/src/services/projects.ts), called by [`deployment.trpcs.ts`](../apps/web/src/trpc/routers/deployment.trpcs.ts) and `app.trpc.ts`.
-
-1. `deployment.deploy` looks for an active app with the repository ID and authenticated creator.
-2. On first import, `initializeNewProjectAndDeploy()` reads repository metadata, creates a project and app, generates domains, stores framework configuration, and encrypts initial environment values.
-3. Initial import deploys the repository's default branch. The incoming `branch` is used when deploying an existing app, but is not passed into initial-project creation. The import form's editable project-name state is also not part of the mutation payload; stored names are derived from the repository.
-4. `deployProject()` resolves the branch to a commit SHA using GitHub, then inserts a `queued`, production deployment row.
-5. `ControlPanelAPIClient.queueDeployment()` sends `{ userId, deploymentId }` to the control plane, with a 15-second request timeout.
-6. The HTTP handler enqueues a job and returns. Execution is asynchronous; the web UI navigates to the application with `?deployment=<id>` to select its persisted logs.
-
-These database writes and queue insertion are separate operations. There is no transaction spanning initial setup and no database/queue outbox. A queue failure can leave persisted setup rows or a deployment in `queued` status.
-
-`app.redeploy` selects the latest deployment's branch, resolves the linked repository by its stable GitHub repository ID, and queues a new deployment of that branch's current head. This is a fresh deployment rather than a rollback to the previous SHA. The procedure has a 20-second response timeout around the operation; that timer does not cancel underlying work.
-
-## Control-plane implementations
-
-[`ControlPanelAPIClient`](../packages/api-sdk/src/client.ts) is the server-side seam between web workflows and the deployment host. `API_BASE_URL` must already include `/api/v1`; client methods append paths to it. Standard JSON responses contain `status`, `statusCode`, `message`, `data`, and `errors`.
-
-Both [`apps/node-manager/main.go`](../apps/node-manager/main.go) and [`apps/api/src/router/v1`](../apps/api/src/router/v1) expose this interface:
-
-| Method and path                             | Behavior                                                                       |
-| ------------------------------------------- | ------------------------------------------------------------------------------ |
-| `GET /api/v1/health`                        | Public process-liveness response; does not probe Redis, Docker, or PostgreSQL. |
-| `POST /api/v1/deployments/queue`            | Validates the payload and queues a deployment job.                             |
-| `GET /api/v1/admin/host`                    | Reads OS memory/CPU information and Docker inventory/disk information.         |
-| `GET /api/v1/admin/docker/:resource`        | Lists `containers`, `images`, or `volumes`.                                    |
-| `DELETE /api/v1/admin/docker/:resource/:id` | Deletes a Docker resource; container and image removal use force.              |
-| `GET /api/v1/logs/stream/:deploymentId`     | Streams logs from `deployment-<id>` as server-sent events.                     |
-
-Every endpoint except health requires `Authorization: Bearer <API_KEY>`. Admin endpoints operate on Docker host resources, without filtering to NMT labels; the web layer enforces the user's `admin` permission before forwarding them.
-
-The Express implementation uses `@repo/queues` and Dockerode. The Go implementation uses the Docker Engine HTTP interface over `/var/run/docker.sock`, Linux system calls for memory information, and a small Redis protocol client. Its `addBullMQJob()` function writes BullMQ-compatible keys and events using Lua under the `bull:deployment-queue:` prefix. Changes to BullMQ versions, queue names, options, or job payloads must account for this manual implementation as well as the TypeScript producer and consumer. Matching endpoint names do not establish complete behavioral parity.
-
-The Go module declares Go 1.27.1; its Dockerfile builds with Go 1.27 on Alpine. Its Unix socket and Linux memory implementation make the supplied container the intended execution environment. TypeScript Docker helpers additionally recognize the Windows Docker named pipe.
-
-## Deployment worker
-
-The active implementation is [`deployment.worker.ts`](../apps/worker/src/workers/deployment.worker.ts), supported by [`services/docker.ts`](../apps/worker/src/services/docker.ts), [`services/github.ts`](../apps/worker/src/services/github.ts), and [`services/env-vars.ts`](../apps/worker/src/services/env-vars.ts).
-
-The queue is named `deployment-queue`; its payload contains only `userId` and `deploymentId`. The worker loads app, framework, and domain details from PostgreSQL. It consumes up to five jobs concurrently and serializes deployments of the same app with an in-memory promise map. This lock applies within one worker process; it does not coordinate multiple replicas.
-
-The TypeScript producer and Go producer configure three attempts with exponential backoff starting at 2 seconds, retaining up to 100 completed and 1,000 failed jobs. A worker error marks the deployment `failed`, persists the error message, and rethrows so the queue can retry. Retries reuse deployment IDs and deterministic Docker names; there is no general reconciliation step for artifacts left by a prior attempt.
-
-The successful execution path is:
-
-1. Validate the deployment, app, matching environment domain, and framework configuration.
-2. Authenticate to GHCR and create `builder-<deploymentId>` from `node:22-alpine`, installing Git, Docker CLI, and Bash inside it.
-3. Mark `cloning`, clone into `/app` using a GitHub installation token, and run `git checkout --detach <commit>` for the stored SHA.
-4. Resolve the configured root directory under `/app`, mark `installing`, and run the configured install command there.
-5. Decrypt the project's environment values and write a `.env` file in that root directory.
-6. Mark `building` and run the configured build command. Commit the builder filesystem into `ghcr.io/<lowercase-GITHUB_USER_NAME>/<deploymentId>:<deploymentId>`, setting `WORKDIR /app` and a shell command for startup.
-7. Find prior deployment containers using `nmt.app-id` or a matching Traefik host rule. Mark `starting`, create `deployment-<deploymentId>` on `app-network`, attach Traefik labels and the configured port, and start it.
-8. Mark `success`. Attach runtime-log persistence, push the image to GHCR, and remove the builder and prior containers asynchronously. These background operations do not gate the successful job result.
-
-Keep these implementation constraints in view when changing this flow:
-
-- Success means Docker accepted the container start. There is no application readiness probe, automatic health-based rollback, or guarantee of zero downtime. The previous containers remain until the replacement starts, then are removed in background cleanup.
-- The clone URL uses the installation account and mutable `appName` as repository identity. Renaming the app can affect cloning even though the app retains a stable repository ID.
-- Install and build commands use the configured root directory, but the committed startup working directory is always `/app`. `outputDirectory` is stored without being consumed by the worker.
-- The Docker preset supplies command strings, but this flow always starts from the Node builder image. The builder has a Docker CLI without a mounted Docker socket; there is no separate Dockerfile execution path here.
-- `.env` is written after dependency installation. Values are not separately injected with Docker's runtime `Env` option, and the committed filesystem includes the generated file. The cloned `.git` metadata also remains in the committed filesystem.
-- Prior-container matching uses app ID across environments. Extending the current production-only request flow to previews requires reviewing replacement selection as well as adding a deployment environment input.
-
-`deployment.worker.old.ts` and `deployment.worker.old.2.ts` are historical implementations, not imported by the worker entry point. The checked-in [`builder.Dockerfile`](../apps/worker/docker/builder.Dockerfile) is also not used by `createBuilderContainer()`, which prepares its container programmatically.
-
-## Logs, configuration, and deletion
-
-### Logs
-
-Persisted deployment logs and live runtime logs follow different paths:
-
-- Builder command output and deployment phase/error messages are inserted into `DeploymentLogs`. The worker also attaches a Docker runtime stream and serializes its database writes with `DeploymentLogQueue`. Application-detail polling reads deployment history with its logs through `app.get`; `?deployment=<id>` selects the displayed release.
-- The application-log panel connects to [`/api/apps/[appId]/runtime-logs`](../apps/web/src/app/api/apps/%5BappId%5D/runtime-logs/route.ts). This Next.js handler explicitly checks the session, validates the app ID, selects the owner's latest successful deployment, and proxies the SDK's control-plane stream. The browser receives no control-plane bearer key.
-
-The control plane tails 100 Docker log lines, follows stdout/stderr, and sends SSE heartbeat comments every 15 seconds. Runtime logs track the latest successful deployment, independently of the deployment selected for historical logs. Persisted runtime capture depends on the worker's in-process stream attachment; it is not a separate log collector that restores subscriptions on restart. Neither database log retrieval nor browser accumulation has a pagination/retention limit in the application implementation.
-
-### Environment values and configuration
-
-[`web/services/env-vars.ts`](../apps/web/src/services/env-vars.ts) encrypts values with AES-256-GCM and stores `base64(iv):base64(authTag):base64(ciphertext)`. The key is `ENV_ENCRYPTION_KEY`, decoded as exactly 32 bytes from 64 hexadecimal characters. The worker has a corresponding decryption implementation; the web and worker must use the same key and format.
-
-Application detail queries return environment key metadata, without decrypted values. Adding a value inserts a row; deleting one deactivates the row after checking that it belongs to the app's project. Saving build settings or environment values changes persisted configuration; the UI prompts for redeployment to apply the changes. App renaming does not regenerate existing domains.
-
-### Deletion
-
-`project.deleteProject` deactivates the project row and does not stop its containers or deactivate child records. `app.delete` attempts to force-remove the latest successful deployment container, then deactivates the app and its project. Container-removal failures are logged and do not prevent the database updates. Images, environment rows, domains, and deployment history are not comprehensively deleted by these operations. See [`project.trpc.ts`](../apps/web/src/trpc/routers/project.trpc.ts) and [`app.trpc.ts`](../apps/web/src/trpc/routers/app.trpc.ts) before extending deletion behavior.
-
-## Configuration and operations
-
-TypeScript environment modules load `dotenv/config` and validate configuration with Zod at module import. The complete required set depends on the imported packages, not just the application's own environment schema. Both database URLs are required by the database validator even though runtime selection currently behaves as described above.
-
-| Configuration group                                              | Consumers / source                                                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| WorkOS credentials, cookie password, callback URI                | Web AuthKit integration and [`web/src/env/vars.ts`](../apps/web/src/env/vars.ts).                                          |
-| GitHub App ID, slug, private key                                 | Web GitHub integration and worker cloning; literal `\n` sequences in the configured private key are converted to newlines. |
-| `GITHUB_USER_NAME`, `GITHUB_PAT`                                 | Worker GHCR authentication, image names, and pushes.                                                                       |
-| `DEV_DATABASE_URL`, `PROD_DATABASE_URL`, `DB_ENV`, `BASE_DOMAIN` | Database configuration, migrations, and hostname generation.                                                               |
-| `ENV_ENCRYPTION_KEY`                                             | Web encryption and worker decryption.                                                                                      |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`                     | Queue producers and worker.                                                                                                |
-| `API_APP_PORT`, `API_KEY`                                        | Control-plane listener and shared bearer authentication.                                                                   |
-| `API_BASE_URL`, `API_KEY`                                        | SDK configuration loaded by the web's server-side client.                                                                  |
-| `CLOUDFLARE_TUNNEL_TOKEN`                                        | Tunnel Compose project and the setup script.                                                                               |
-
-[`scripts/copy-env.mjs`](../scripts/copy-env.mjs) copies the root `.env` into each immediate child of `apps` and `packages`. It does not recurse into `packages/docker/<service>`. [`scripts/docker.mjs`](../scripts/docker.mjs) loads the root environment and passes it to Compose during `setup`.
-
-`npm run docker -- setup` checks configuration, creates `app-network`, and starts Traefik, Redis, worker, API, then Cloudflare. Its wait function checks that containers are running; the separate Redis health-wait helper is not called. Setup requires the Cloudflare token and always starts the tunnel, although the README describes the tunnel as optional. The Cloudflare Compose file also declares `env_file: .env` in its own directory, which the environment-copy helper does not populate. The Compose wrapper currently prints its merged process environment, so its output can contain configured secrets.
-
-Other `npm run docker -- <command>` invocations run the Compose command in each immediate Docker-project directory. They do not repeat setup's environment propagation or environment copying; service-local Compose interpolation requirements still apply.
-
-| Compose project                                                  | Host integration                                                                                                                                                                     |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`traefik`](../packages/docker/traefik/docker-compose.yml)       | Publishes port 80; Docker provider discovers explicitly labeled applications on `app-network`. No TLS entry point or certificate resolver is configured here.                        |
-| [`redis`](../packages/docker/redis/docker-compose.yml)           | Publishes 6379; password authentication, append-only persistence, `redis-data` volume, and a health check.                                                                           |
-| [`worker`](../packages/docker/worker/docker-compose.yml)         | Builds the TypeScript worker image; mounts the Docker socket; receives database, GitHub, registry, Redis, and encryption configuration.                                              |
-| [`api`](../packages/docker/api/docker-compose.yml)               | Builds the Go node manager; mounts the Docker socket; publishes no host port and has no Traefik routing labels. The separately hosted web app needs an explicitly reachable API URL. |
-| [`cloudflare`](../packages/docker/cloudflare/docker-compose.yml) | Starts the token-authenticated tunnel on `app-network`; ingress and public hostname mapping are outside the checked-in configuration.                                                |
-
-[`scripts/reset.mjs`](../scripts/reset.mjs), invoked through `npm run reset -- --force`, drops the selected PostgreSQL `public` schema, invokes the migration command, and removes all Docker containers, images, volumes, custom networks, and builder cache on the selected Docker host. It is host-wide rather than scoped to Compose or NMT labels. Production reset additionally requires `ALLOW_PRODUCTION_RESET=true`.
-
-## Change map
-
-| Change                                                | Read or modify together                                                                                                                                                                                                                                         |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Import, framework detection, preset defaults          | [`services/github.ts`](../apps/web/src/services/github.ts), [`constants/frameworks.ts`](../apps/web/src/constants/frameworks.ts), [`import-repository.tsx`](../apps/web/src/components/repositories/import-repository.tsx), `git.trpc.ts`, `framework.trpc.ts`. |
-| Deployment creation or redeploy                       | [`services/projects.ts`](../apps/web/src/services/projects.ts), [`deployment.trpcs.ts`](../apps/web/src/trpc/routers/deployment.trpcs.ts), [`app.trpc.ts`](../apps/web/src/trpc/routers/app.trpc.ts), deployment DAL.                                           |
-| Queue contract or retry behavior                      | SDK request schema/client, TypeScript queue producer, Go `addBullMQJob()`, active worker.                                                                                                                                                                       |
-| Build, startup, container replacement, routing labels | Active worker, worker Docker helpers, framework configuration, Traefik Compose definition.                                                                                                                                                                      |
-| App settings, secrets, and log presentation           | `app.trpc.ts`, `app-details.tsx`, web/worker environment-value modules, runtime-log route, SDK stream, both control-plane implementations.                                                                                                                      |
-| Persistence                                           | Table definitions, relations, DAL, and Drizzle-generated migrations; account for runtime/migration database-selection differences.                                                                                                                              |
-| Host administration                                   | Web `admin.trpc.ts` / admin page, SDK admin methods, Go handlers, Express admin router.                                                                                                                                                                         |
-| Runtime packaging                                     | Active Compose definitions and Dockerfiles; the root workspace graph alone does not cover Go.                                                                                                                                                                   |
-| Navigation or authentication                          | `routes.ts`, `proxy.ts`, AuthKit route handlers, `trpc/init.ts`, procedure ownership checks.                                                                                                                                                                    |
-
-## Build and verification reference
-
-Root `npm run lint`, `npm run check-types`, and `npm run build` dispatch through Turbo. Builds depend on upstream package builds, with `.next` and `dist` outputs cached. Shared TypeScript packages export compiled `dist` files; development processes need those dependencies built before importing them. The root manifest permits Node 18+, while supplied Node container images use Node 22.
-
-`npm run dev` starts the npm workspace dev scripts, including the Express app and TypeScript worker alongside Next.js. It does not start Go, Redis, PostgreSQL, or the Compose projects. Database generation, migration, and Studio commands are defined in [`packages/database/package.json`](../packages/database/package.json); choose `DB_ENV` with the runtime-pool caveat in mind.
-
-No automated test files, root test script, or CI workflow were found in the inspected source tree. npm checks cover npm workspaces; Go needs a separate check using its declared toolchain, for example the existing container build from the repository root:
-
-```sh
-docker build -f apps/node-manager/docker/Dockerfile -t nmt-node-manager .
-```
-
-Before editing Next.js code, follow [`apps/web/AGENTS.md`](../apps/web/AGENTS.md), which requires consulting the relevant version-specific guide in `node_modules/next/dist/docs/`. Keep this reference current when changing runtime selection, job contracts, deployment lifecycle, persistence, or configuration flow.
+Before editing Next.js, follow [`apps/web/AGENTS.md`](../apps/web/AGENTS.md) and its installed version-specific guides. Keep this reference current when changing runtime selection, job contracts, deployment lifecycle, persistence or configuration.

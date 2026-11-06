@@ -2,11 +2,8 @@
 
 import { FrameworkConfigPreset } from "@/models/framework";
 import { useTRPC } from "@/trpc/client";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  clearDeploymentSubmissionId,
-  getDeploymentSubmissionId,
-} from "@/utils/deployment-submission";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useDeploymentSubmission } from "@/utils/use-deployment-submission";
 import {
   ChevronDown,
   File,
@@ -81,9 +78,12 @@ const ImportRepository = ({
   const [installCommand, setInstallCommand] = useState("");
 
   const trpc = useTRPC();
-  const queryClient = useQueryClient();
-  const [isCheckingSubmission, setIsCheckingSubmission] = useState(false);
   const submissionScope = `import:${repoId}:${branch}`;
+  const submission = useDeploymentSubmission(
+    submissionScope,
+    "Deployment queued",
+  );
+  const isCheckingSubmission = submission.isResolving;
   const router = useRouter();
 
   const { data, isPending, isError, error } = useQuery(
@@ -165,45 +165,19 @@ const ImportRepository = ({
     deploymentId: number;
     message: string;
   }) => {
-    if (result.outcome !== "uncertain")
-      clearDeploymentSubmissionId(submissionScope);
-    toast({
-      title:
-        result.outcome === "accepted"
-          ? "Deployment queued"
-          : result.outcome === "rejected"
-            ? "Dispatch rejected"
-            : "Deployment saved; confirmation pending",
-      description: result.message,
-      variant: result.outcome === "accepted" ? "success" : "warning",
-    });
+    submission.present(result);
     router.push(
       `/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`,
     );
   };
 
   const deployProject = async () => {
-    const submissionId = getDeploymentSubmissionId(submissionScope);
-    setIsCheckingSubmission(true);
-    try {
-      const existing = await queryClient.fetchQuery({
-        ...trpc.deployment.submission.queryOptions({ submissionId }),
-        staleTime: 0,
-      });
-      if (existing) {
-        showSubmission(existing);
-        return;
-      }
-    } catch {
-      toast({
-        title: "Could not confirm submission",
-        description:
-          "Retry to check the same submission when the service returns.",
-        variant: "warning",
-      });
+    const resolved = await submission.resolve();
+    if (!resolved) return;
+    const { submissionId, result } = resolved;
+    if (result) {
+      showSubmission(result);
       return;
-    } finally {
-      setIsCheckingSubmission(false);
     }
     const envVarsArray = envVarsFields
       .map((id) => envVars[id])
@@ -245,13 +219,7 @@ const ImportRepository = ({
         },
       },
       {
-        onError: (err) => {
-          toast({
-            title: "Could not confirm submission",
-            description: `${err.message} Retry with this same submission to check whether it was saved.`,
-            variant: "warning",
-          });
-        },
+        onError: submission.unconfirmed,
         onSuccess: showSubmission,
       },
     );

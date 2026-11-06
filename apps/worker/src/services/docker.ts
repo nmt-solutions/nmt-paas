@@ -1,6 +1,5 @@
 import { createDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
 import Docker from "dockerode";
-import env from "../env/vars.js";
 import os from "os";
 import { createDockerCommandAdapter } from "../deployment/docker-command-adapter.js";
 
@@ -14,15 +13,9 @@ export const getLocalDocker = () => {
 };
 
 export const getDocker = async () => {
-  const docker = getLocalDocker();
-
-  await docker.checkAuth({
-    username: env.variables.GITHUB_USER_NAME,
-    password: env.variables.GITHUB_PAT,
-    serveraddress: "ghcr.io",
-  });
-
-  return docker;
+  // Local acquisition/adoption never authenticates against a registry.
+  // publishImage supplies registry authentication only when pushing an image.
+  return getLocalDocker();
 };
 
 export const { createBuilderContainer, executeCommand } =
