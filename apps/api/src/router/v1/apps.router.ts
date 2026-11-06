@@ -31,23 +31,27 @@ appsRouter.post("/:appId/retire", async (req, res) => {
     return;
   }
   const allowed = new Set(input.data.deploymentIds.map(String));
-  const owns = (labels: Record<string, string> = {}) =>
+  const owns = (labels: Record<string, string> = {}, names: string[]) =>
     labels["nmt.app-id"] === String(appId.data) &&
-    labels["nmt.artifact"] === "runtime" &&
+    (labels["nmt.artifact"] === "runtime" ||
+      (!("nmt.artifact" in labels) &&
+        names.includes(`/deployment-${labels["nmt.deployment-id"]}`))) &&
     allowed.has(labels["nmt.deployment-id"] ?? "");
   try {
     let complete = true;
     for (const item of await docker.listContainers({ all: true })) {
       const candidate =
         (item.Labels?.["nmt.app-id"] === String(appId.data) &&
-          item.Labels?.["nmt.artifact"] === "runtime") ||
+          (item.Labels?.["nmt.artifact"] === "runtime" ||
+            (!("nmt.artifact" in (item.Labels ?? {})) &&
+              allowed.has(item.Labels?.["nmt.deployment-id"] ?? "")))) ||
         item.Names.some(
           (name) =>
             name.startsWith("/deployment-") &&
             allowed.has(name.slice("/deployment-".length)),
         );
       if (!candidate) continue;
-      if (!item.Id || !owns(item.Labels)) {
+      if (!item.Id || !owns(item.Labels, item.Names)) {
         complete = false;
         continue;
       }
@@ -56,7 +60,7 @@ appsRouter.post("/:appId/retire", async (req, res) => {
         const current = await container.inspect();
         if (
           current.Id !== item.Id ||
-          !owns(current.Config.Labels) ||
+          !owns(current.Config.Labels, [current.Name]) ||
           current.Config.Labels["nmt.deployment-id"] !==
             item.Labels["nmt.deployment-id"]
         ) {

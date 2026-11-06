@@ -2,7 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { database } from "..";
 import { Client } from "pg";
 import env from "../env/vars";
-import { Apps, AppDomains, Deployments } from "../schema";
+import { Apps } from "../schema";
+import { retireAppVisibility } from "./retirement-visibility";
 
 // A session lock spans host cleanup without holding a database transaction open.
 // Execution takes the same lock, then reloads active eligibility before Docker.
@@ -40,27 +41,7 @@ export async function deactivateOwnedApp(appId: number, userId: string) {
       where: { id: appId, createdBy: userId, project: { userId } },
     });
     if (!app) return undefined;
-    if (app.resourceStatus === "active" || app.retirement === null) {
-      await tx
-        .update(Apps)
-        .set({
-          resourceStatus: "inactive",
-          modifiedBy: userId,
-          retirement: {
-            status: "pending",
-            message: "Runtime cleanup pending. Retry cleanup to recover.",
-          },
-        })
-        .where(and(eq(Apps.id, appId), eq(Apps.createdBy, userId)));
-      await tx
-        .update(AppDomains)
-        .set({ resourceStatus: "inactive", modifiedBy: userId })
-        .where(eq(AppDomains.appId, appId));
-      await tx
-        .update(Deployments)
-        .set({ resourceStatus: "inactive", modifiedBy: userId })
-        .where(eq(Deployments.appId, appId));
-    }
+    await retireAppVisibility(tx, app, userId);
     return tx.query.Deployments.findMany({
       where: { appId, userId, createdBy: userId },
       columns: { id: true },

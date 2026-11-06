@@ -80,4 +80,77 @@ test("owner-scoped host cleanup preserves siblings, exposes partial failure, and
       (item) => item.Id === "runtime-61",
     ),
   );
+
+  // Exact pre-upgrade format from bb3f873: deterministic name and both labels,
+  // with no role label. Domain matches alone never authorize deletion.
+  const legacy = fixture.seed(7, 71, "legacy", {
+    Labels: { "nmt.app-id": "7", "nmt.deployment-id": "71" },
+  });
+  const builder = fixture.seed(7, 72, "builder", {
+    Names: ["/builder-72"],
+    Labels: { "nmt.deployment-id": "72", "nmt.artifact": "builder" },
+  });
+  fixture.changedOwnership.add(legacy);
+  result = await (await send(undefined, { deploymentIds: [71, 72] })).json();
+  assert.equal(result.data.complete, false);
+  assert.equal(
+    (await fixture.docker.getContainer(legacy).inspect()).State.Running,
+    true,
+  );
+  fixture.changedOwnership.delete(legacy);
+  for (let i = 0; i < 2; i++) {
+    result = await (await send(undefined, { deploymentIds: [71, 72] })).json();
+    assert.equal(result.data.complete, true);
+  }
+  assert.ok(
+    !(await fixture.docker.listContainers({ all: true })).some(
+      (c) => c.Id === legacy,
+    ),
+  );
+  assert.equal(
+    (await fixture.docker.getContainer(builder).inspect()).State.Running,
+    true,
+  );
+  for (const [id, labels, names] of [
+    [
+      "foreign-legacy",
+      { "nmt.app-id": "8", "nmt.deployment-id": "73" },
+      ["/deployment-73"],
+    ],
+    [
+      "unverified",
+      { "traefik.http.routers.deployment-74.rule": "Host(`fixture.invalid`)" },
+      ["/deployment-74"],
+    ],
+    [
+      "conflicting-role",
+      {
+        "nmt.app-id": "7",
+        "nmt.deployment-id": "75",
+        "nmt.artifact": "builder",
+      },
+      ["/deployment-75"],
+    ],
+    [
+      "wrong-name",
+      { "nmt.app-id": "7", "nmt.deployment-id": "76" },
+      ["/other-76"],
+    ],
+  ] as const) {
+    fixture.seed(7, 73, id, { Labels: { ...labels }, Names: [...names] });
+  }
+  result = await (
+    await send(undefined, { deploymentIds: [73, 74, 75, 76] })
+  ).json();
+  assert.equal(result.data.complete, false);
+  for (const id of [
+    "foreign-legacy",
+    "unverified",
+    "conflicting-role",
+    "wrong-name",
+  ])
+    assert.equal(
+      (await fixture.docker.getContainer(id).inspect()).State.Running,
+      true,
+    );
 });

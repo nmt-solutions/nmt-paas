@@ -11,6 +11,8 @@ import pg from "pg";
 import { readHistoryLogs } from "./history.mjs";
 import process from "node:process";
 import { URL } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { deploymentFixture } from "../test/fixtures/deployment.ts";
 
 test(
   "production deployment diagnostics redact fixture credentials and environment values",
@@ -103,16 +105,11 @@ test(
     let deploymentId;
     let failureStage = "clone";
     const builders = new Map();
-    const docker = {
+    let docker = {
       checkAuth: async () => {
-        if (failureStage === "authentication") {
-          const error = new Error(
-            "registry authorization rejected: fixture-registry-token (HTTP 403)",
-          );
-          error.request = { password: "fixture-registry-token" };
-          throw error;
-        }
-        return {};
+        throw new Error(
+          "Local build/start must not authenticate with a registry",
+        );
       },
       pull: (_image, callback) => callback(null, Readable.from([])),
       listContainers: async () => [],
@@ -356,18 +353,45 @@ test(
       .returning();
     deploymentId = authDeployment.id;
     output.length = 0;
+    // Authentication now belongs to publication, after local start. Preserve
+    // the original status/code/redaction checks at that actual vendor boundary.
+    const registryFixture = await deploymentFixture({
+      pushOutput: () => [
+        '{"error":"registry authorization rejected: fixture-registry-token (HTTP 403)"}\n',
+      ],
+    });
+    t.after(registryFixture.close);
+    docker = registryFixture.docker;
+    await processJob({ data: { userId: "fixture-user", deploymentId } });
+    const started = await docker
+      .getContainer(`deployment-${deploymentId}`)
+      .inspect();
+    const { getPublication } =
+      await import("@repo/database/access-layer/deployment-publication.dal");
+    for (let count = 0; count < 100; count++) {
+      if (
+        (await getPublication(deploymentId, "fixture-user"))?.status ===
+        "failed"
+      )
+        break;
+      await delay(20);
+    }
     await assert.rejects(
-      processJob({ data: { userId: "fixture-user", deploymentId } }),
+      processJob({
+        data: { userId: "fixture-user", deploymentId, operation: "publish" },
+      }),
       (error) => {
         failure = error;
         return true;
       },
     );
-    const authMessages = (
-      await readHistoryLogs(app.id, deploymentId, "fixture-user")
-    )
-      .map((log) => log.message)
-      .join("\n");
+    const publication = await getPublication(deploymentId, "fixture-user");
+    const authMessages = [
+      ...(await readHistoryLogs(app.id, deploymentId, "fixture-user")).map(
+        (log) => log.message,
+      ),
+      publication.lastError,
+    ].join("\n");
     const authDiagnostics = `${output.join("\n")}\n${authMessages}\n${format(failure)}`;
     assert.ok(
       !authDiagnostics.includes("fixture-registry-token"),
@@ -375,5 +399,14 @@ test(
     );
     assert.match(authMessages, /authorization rejected/);
     assert.match(authMessages, /HTTP 403/);
+    assert.equal(publication.status, "failed");
+    const authView = await getUserApp(app.id, "fixture-user");
+    assert.equal(
+      authView.deployments.find((item) => item.id === deploymentId).status,
+      "success",
+    );
+    const current = await docker.getContainer(started.Id).inspect();
+    assert.equal(current.Id, started.Id);
+    assert.equal(current.State.Running, true);
   },
 );

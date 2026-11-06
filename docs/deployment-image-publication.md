@@ -107,9 +107,12 @@ multi-worker support or an automatic database recovery scanner, or guarantee tha
 background publication has finished when a deployment job
 completes. An interrupted background push needs explicit recovery; recovery jobs
 then use the existing BullMQ retries. A lost HTTP acknowledgement can be retried
-without redeployment; durable dispatch acceptance is a separate ticket. The
-existing pre-start Docker registry-authentication preflight can still reject an
-attempt before any runtime starts. Cleanup recovery is also a separate outcome.
+without redeployment; [durable dispatch](deployment-dispatch-recovery.md) handles
+ordinary admission recovery. Local Docker acquisition and runtime/image adoption
+do not authenticate against GHCR. Only publication supplies registry authentication
+to the push adapter. A fresh delivery that fails before discovery preserves an
+already recorded successful start; genuine initial build/start failures still
+report failure. Cleanup recovery is also a separate outcome.
 
 `npm test --workspace=worker` exercises the shared execution interface with a
 Docker HTTP fixture. `TEST_DATABASE_URL=<disposable loopback PostgreSQL URL>

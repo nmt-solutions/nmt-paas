@@ -45,12 +45,15 @@ and Docker-socket access controls. It introduces no unauthenticated HTTP endpoin
 and no host-administrator API changes. Use the recorded deployment owner's user
 ID; a different owner or unavailable deployment is rejected.
 
-Both execution and cleanup require an active deployment, app and project owned by
-that user. The executor repeats the owner/eligibility read inside the existing
-app turn before accessing Docker. A denial leaves execution status, cleanup and
-deployment history untouched. Cleanup does not load or change app environment
-values; ordinary execution and runtime/image adoption retain structured values
-and diagnostic secret registration.
+Ordinary execution, queued cleanup (`action: "cleanup"`), publication, admission
+and log access still require active owned ancestry. The OS-authorized operator
+uses the distinct `operation: "cleanup"` path and a limited historical reader for
+an already recorded ledger, including after app or project retirement. That read
+requires the deployment's owner and creator, app creator, and project's owner and
+creator to match. It returns only app coordination identity, owner, start status
+and cleanup ledger. It is not an inactive-data option on ordinary reads. Both
+reads repeat inside the app lifecycle lock before Docker; denial changes no
+status, ledger or history. Cleanup does not load environment values.
 
 1. Let active deployment attempts finish, then stop this host's worker before
    running the command. Production execution, this command, and owner retirement
@@ -67,15 +70,28 @@ and diagnostic secret registration.
    ```
 
    A compiled worker can run `node apps/worker/dist/cleanup-deployment.js 42 owner-user-id`.
-   Both paths use the same production executor as BullMQ, with cleanup-only mode.
+   Both paths use the same production executor as BullMQ, selecting only the
+   operator cleanup operation. No host HTTP or queue cleanup endpoint is added.
+
+   Inspect the limited persisted result, including after retirement or process
+   restart, without accessing Docker:
+
+   ```sh
+   npm run cleanup:deployment --workspace=worker -- 42 owner-user-id --status
+   ```
+
+   This prints only deployment ID, recorded start status and cleanup ledger.
+   Missing ledgers and foreign ownership are rejected; it does not infer targets.
 
 3. Exit **0** means tracked cleanup is complete. Exit **2** means cleanup remains
-   pending: inspect the owner's cleanup display/logs, resolve the Docker removal
+   pending: inspect the operator's `--status` result (or the active owner's cleanup display/logs), resolve the Docker removal
    problem, and repeat the command. Exit **1** means invalid input, ownership,
    configuration, database/Docker availability, or another recovery error. Repeating
    recovery is safe even after a lost acknowledgement or partial removal.
-4. Refresh the selected deployment to verify cleanup and its unchanged container
-   start status. Restart the normal worker when recovery is finished.
+4. Refresh the active selected deployment, or repeat `--status` for a retired
+   deployment, to verify cleanup and unchanged start status. Retirement status
+   continues to describe runtime removal separately. Restart the normal worker
+   when recovery is finished.
 
 Recovery neither builds nor starts a container, resolves GitHub access, loads app
 environment values, publishes an image, nor submits a deployment job. It uses the
@@ -105,7 +121,8 @@ If the replacement has disappeared or stopped, cleanup deliberately remains
 pending rather than guessing which runtime is current. Restore/verify the
 replacement through the normal execution recovery procedure before retrying.
 If the database was unavailable before intent could be saved, cleanup-only mode
-reports **No recorded cleanup**; use the existing deployment retry/reconciliation
+rejects the unavailable ledger with **Deployment not found for cleanup owner**;
+use the existing deployment retry/reconciliation
 workflow in [deployment-retry-recovery.md](deployment-retry-recovery.md). This
 command does not infer historical ownership from diagnostic text.
 

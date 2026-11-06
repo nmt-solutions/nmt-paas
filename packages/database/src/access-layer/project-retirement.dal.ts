@@ -2,7 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { Client } from "pg";
 import { database } from "..";
 import env from "../env/vars";
-import { AppDomains, Apps, Deployments, Projects } from "../schema";
+import { Projects } from "../schema";
+import { retireAppVisibility } from "./retirement-visibility";
 
 const retirementSelection = {
   columns: { id: true, name: true, resourceStatus: true },
@@ -70,27 +71,7 @@ export async function deactivateOwnedProject(
           .set({ resourceStatus: "inactive", modifiedBy: userId })
           .where(and(eq(Projects.id, projectId), eq(Projects.userId, userId)));
       for (const app of project.apps) {
-        if (app.resourceStatus === "inactive" && app.retirement !== null)
-          continue;
-        await tx
-          .update(Apps)
-          .set({
-            resourceStatus: "inactive",
-            modifiedBy: userId,
-            retirement: {
-              status: "pending",
-              message: "Runtime cleanup pending. Retry cleanup to recover.",
-            },
-          })
-          .where(eq(Apps.id, app.id));
-        await tx
-          .update(AppDomains)
-          .set({ resourceStatus: "inactive", modifiedBy: userId })
-          .where(eq(AppDomains.appId, app.id));
-        await tx
-          .update(Deployments)
-          .set({ resourceStatus: "inactive", modifiedBy: userId })
-          .where(eq(Deployments.appId, app.id));
+        await retireAppVisibility(tx, app, userId);
       }
       return project.apps.map((app) => app.id);
     });

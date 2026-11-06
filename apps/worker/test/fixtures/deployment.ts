@@ -503,6 +503,9 @@ export async function deploymentFixture({
   };
 
   return {
+    denyStart: (id: string) => {
+      failStart = id;
+    },
     restoreStart: () => {
       failStart = undefined;
     },

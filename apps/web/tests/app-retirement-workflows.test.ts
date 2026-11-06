@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { generateKeyPairSync } from "node:crypto";
@@ -155,6 +156,11 @@ const fixtures = new Client({
   connectionString: process.env.AUTH_TEST_DATABASE_URL,
 });
 await fixtures.connect();
+// Reserve this workflow's IDs away from the Docker fixture's historical 41/42.
+// A real daemon cannot contain two containers with the same deployment name.
+await fixtures.query(
+  `SELECT setval(pg_get_serial_sequence('"Deployments"', 'id'), 1000, false)`,
+);
 after(async () => {
   mock.restoreAll();
   await dockerFixture.close();
@@ -352,19 +358,217 @@ test("retiring one app preserves its active project and deployable sibling", asy
   );
 });
 
-async function seedRuntime(appId: number, deploymentId: number) {
+async function seedRuntime(
+  appId: number,
+  deploymentId: number,
+  legacy = false,
+) {
   const container = await dockerFixture.docker.createContainer({
     name: `deployment-${deploymentId}`,
     Image: "fixture-image",
     Labels: {
       "nmt.app-id": String(appId),
       "nmt.deployment-id": String(deploymentId),
-      "nmt.artifact": "runtime",
+      ...(legacy ? {} : { "nmt.artifact": "runtime" }),
     },
   });
   await container.start();
   return container;
 }
+
+test("app and project retirement remove verified pre-upgrade runtimes and safely repeat", async () => {
+  for (const scope of ["app", "project"] as const) {
+    const userId = `legacy-${scope}-owner`;
+    const caller = owner(userId);
+    const resource = await resourceFixture(userId);
+    const sibling = await resourceFixture(userId);
+    const runtime = await seedRuntime(
+      resource.appId,
+      resource.deploymentId,
+      true,
+    );
+    const other = await seedRuntime(sibling.appId, sibling.deploymentId, true);
+    const retire = (who: ReturnType<typeof owner>) =>
+      scope === "app"
+        ? who.app.delete({ appId: resource.appId })
+        : who.project.deleteProject({ projectId: resource.projectId });
+    await assert.rejects(retire(owner("foreign-legacy-owner")), {
+      code: "NOT_FOUND",
+    });
+    assert.equal((await runtime.inspect()).State.Running, true);
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await retire(caller)).retirement?.status, "complete");
+      await assert.rejects(runtime.inspect(), { statusCode: 404 });
+      assert.equal((await other.inspect()).State.Running, true);
+    }
+    await assert.rejects(caller.app.get({ appId: resource.appId }), {
+      code: "NOT_FOUND",
+    });
+  }
+});
+
+test(
+  "operator cleanup recovers recorded builders and images after app or project retirement",
+  { timeout: 60000 },
+  async () => {
+    const persistence =
+      await import("@repo/database/access-layer/deployment.dal");
+    const publication =
+      await import("@repo/database/access-layer/deployment-publication.dal");
+    const { createDeploymentLogs } =
+      await import("@repo/database/access-layer/deployment-logs.dal");
+    const { withAppLifecycleLock } =
+      await import("@repo/database/access-layer/app-retirement.dal");
+    const { createDeploymentExecutor } =
+      await import("../../worker/src/deployment/execute-deployment");
+    for (const scope of ["app", "project"] as const) {
+      const userId = `historical-cleanup-${scope}`;
+      const caller = owner(userId);
+      const resource = await resourceFixture(userId);
+      const builderId = `builder-${resource.deploymentId}`;
+      await fixtures.query(
+        'UPDATE "Deployments" SET status = $1 WHERE id = $2',
+        ["queued", resource.deploymentId],
+      );
+      cleanupFailures[builderId] = "builder busy";
+      cleanupFailures["fixture-image"] = "image busy";
+      dockerFixture.denyStart(`deployment-${resource.deploymentId}`);
+      try {
+        await assert.rejects(
+          createDeploymentExecutor({
+            ...dockerFixture.dependencies,
+            ...persistence,
+            ...publication,
+            createDeploymentLogs,
+            withAppLifecycleLock,
+          })({ userId, deploymentId: resource.deploymentId }),
+          /Start application/,
+        );
+      } finally {
+        dockerFixture.restoreStart();
+      }
+      const before = (await caller.app.get({ appId: resource.appId }))
+        .deployments[0]!;
+      assert.equal(before.status, "failed");
+      assert.equal(before.cleanup?.status, "pending");
+      assert.equal(
+        (await dockerFixture.docker.getContainer(builderId).inspect()).State
+          .Running,
+        true,
+      );
+      const imageId = (
+        await dockerFixture.docker.getImage("fixture-image").inspect()
+      ).Id;
+      if (scope === "app") await caller.app.delete({ appId: resource.appId });
+      else
+        await caller.project.deleteProject({ projectId: resource.projectId });
+      await assert.rejects(caller.app.get({ appId: resource.appId }), {
+        code: "NOT_FOUND",
+      });
+      delete cleanupFailures[builderId];
+      delete cleanupFailures["fixture-image"];
+      const recover = (who = userId, status = false) =>
+        promisify(execFile)(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            "--experimental-test-module-mocks",
+            "test/fixtures/cleanup-process.mjs",
+            String(resource.deploymentId),
+            who,
+            ...(status ? ["--status"] : []),
+          ],
+          {
+            cwd: fileURLToPath(new URL("../../worker/", import.meta.url)),
+            env: {
+              ...process.env,
+              TSX_TSCONFIG_PATH: fileURLToPath(
+                new URL("../../worker/tsconfig.json", import.meta.url),
+              ),
+              CLEANUP_TEST_DOCKER_PORT: new URL(dockerFixture.host).port,
+            },
+            timeout: 15000,
+            windowsHide: true,
+          },
+        );
+      await assert.rejects(recover("foreign-owner"), /Deployment not found/);
+      assert.equal(
+        (await dockerFixture.docker.getImage(imageId).inspect()).Id,
+        imageId,
+      );
+      const pending = JSON.parse((await recover(userId, true)).stdout);
+      assert.deepEqual(Object.keys(pending).sort(), [
+        "cleanup",
+        "deploymentId",
+        "status",
+      ]);
+      assert.equal(pending.cleanup.status, "pending");
+      assert.equal(pending.status, "failed");
+      for (const [table, column, id] of [
+        ["Deployments", "createdBy", resource.deploymentId],
+        ["Apps", "createdBy", resource.appId],
+        ["Projects", "createdBy", resource.projectId],
+        ["Projects", "userId", resource.projectId],
+      ] as const) {
+        await fixtures.query(
+          `UPDATE "${table}" SET "${column}" = $1 WHERE id = $2`,
+          ["foreign-owner", id],
+        );
+        try {
+          await assert.rejects(recover(), /Deployment not found/);
+        } finally {
+          await fixtures.query(
+            `UPDATE "${table}" SET "${column}" = $1 WHERE id = $2`,
+            [userId, id],
+          );
+        }
+      }
+      for (let i = 0; i < 2; i++) {
+        assert.match((await recover()).stdout, /cleanup complete/);
+        await assert.rejects(
+          dockerFixture.docker.getContainer(builderId).inspect(),
+          { statusCode: 404 },
+        );
+        await assert.rejects(dockerFixture.docker.getImage(imageId).inspect(), {
+          statusCode: 404,
+        });
+        const refreshed = JSON.parse((await recover(userId, true)).stdout);
+        assert.equal(refreshed.status, before.status);
+        assert.equal(refreshed.cleanup.status, "complete");
+      }
+      assert.equal(
+        await persistence.getDeployment(resource.deploymentId, userId),
+        undefined,
+      );
+      for (const request of [
+        {},
+        { action: "cleanup" as const },
+        { operation: "publish" as const },
+      ])
+        await assert.rejects(
+          createDeploymentExecutor({
+            ...dockerFixture.dependencies,
+            ...persistence,
+            ...publication,
+            createDeploymentLogs,
+            withAppLifecycleLock,
+          })({ userId, deploymentId: resource.deploymentId, ...request }),
+          /not found/,
+        );
+      await assert.rejects(caller.app.redeploy({ appId: resource.appId }), {
+        code: "NOT_FOUND",
+      });
+      await assert.rejects(
+        caller.app.deploymentLogs({
+          appId: resource.appId,
+          deploymentId: resource.deploymentId,
+        }),
+        { code: "NOT_FOUND" },
+      );
+    }
+  },
+);
 
 function gate() {
   let resolve!: () => void;

@@ -314,6 +314,35 @@ test(
       JSON.stringify(view),
       /fixture-registry-token|fixture-clone-token/,
     );
+    const started = await docker.getContainer("deployment-42").inspect();
+    // A fresh production acquisition must use local Docker even when registry
+    // authentication is unavailable. Publication remains independently failed.
+    const authOutage = mock.method(docker, "checkAuth", async () => {
+      throw new Error(
+        "Registry authentication unavailable fixture-registry-token",
+      );
+    });
+    const { executeDeployment: reconcile } =
+      await import("../../worker/src/deployment/production-executor.ts?local-reconciliation");
+    await reconcile({ deploymentId, userId });
+    await assert.rejects(
+      reconcile({ deploymentId, userId, operation: "publish" }),
+      /registry denied \[REDACTED\]/,
+    );
+    for (let count = 0; count < 100; count++) {
+      view = await owner.publication({ deploymentId });
+      if (view.publication.status === "failed") break;
+      await delay(20);
+    }
+    assert.equal(view.status, "success");
+    assert.equal(view.publication.status, "failed");
+    const reconciled = await docker.getContainer("deployment-42").inspect();
+    assert.equal(reconciled.Id, started.Id);
+    assert.equal(reconciled.Image, started.Image);
+    assert.equal(reconciled.State.Running, true);
+    assert.equal(fixture.images.size, 1);
+    assert.doesNotMatch(JSON.stringify(view), /fixture-registry-token/);
+    authOutage.mock.restore();
     const { appRouter } = await import("../src/trpc/routers/app.trpc.ts");
     const appOwner = appRouter.createCaller({
       userInfo: { user: { id: userId } },

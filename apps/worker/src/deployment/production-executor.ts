@@ -2,6 +2,7 @@ import { withAppLifecycleLock } from "@repo/database/access-layer/app-retirement
 import { createDeploymentExecutor } from "./execute-deployment.js";
 import {
   getDeployment,
+  getRecordedDeploymentCleanup,
   updateDeployment,
   saveDeploymentCleanup,
 } from "@repo/database/access-layer/deployment.dal";
@@ -26,6 +27,7 @@ import env from "../env/vars.js";
 export const executeDeployment = createDeploymentExecutor({
   withAppLifecycleLock,
   getDeployment,
+  getRecordedDeploymentCleanup,
   updateDeployment,
   saveDeploymentCleanup,
   getPublication,
