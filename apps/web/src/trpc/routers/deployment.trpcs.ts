@@ -1,16 +1,116 @@
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { getAppByRepoId } from "@repo/database/access-layer/apps.dal";
+import {
+  getAppByRepoId,
+  getUserApp,
+  hasUserAppForRepo,
+} from "@repo/database/access-layer/apps.dal";
+import {
+  getDeploymentSubmission,
+  getAppDispatches,
+} from "@repo/database/access-layer/deployment-dispatch.dal";
 import {
   deployProject,
   initializeNewProjectAndDeploy,
 } from "@/services/projects";
 import { TRPCError } from "@trpc/server";
+import { getDeployment } from "@repo/database/access-layer/deployment.dal";
+import {
+  deploymentSubmission,
+  dispatchSubmission,
+  existingSubmission,
+  submissionResult,
+} from "@/services/deployment-dispatch";
+
+import { getPublicationDeployment } from "@repo/database/access-layer/deployment-publication.dal";
+import cpApiClient from "@/services/cp-api-client";
+
+const publicationInput = z.object({
+  deploymentId: z.number().int().positive(),
+});
+
+const requirePublication = async (
+  deploymentId: number,
+  userId: string,
+  administrator: boolean,
+) => {
+  const record = await getPublicationDeployment(
+    deploymentId,
+    userId,
+    administrator,
+  );
+  if (!record)
+    throw new TRPCError({ code: "NOT_FOUND", message: "Deployment not found" });
+  return record;
+};
 
 export const deploymentRouter = createTRPCRouter({
+  publication: authenticatedProcedure
+    .input(publicationInput)
+    .query(async ({ ctx, input }) => {
+      const record = await requirePublication(
+        input.deploymentId,
+        ctx.userInfo.user.id,
+        ctx.userInfo.permissions?.includes("admin") ?? false,
+      );
+      return {
+        deploymentId: record.deploymentId,
+        status: record.status,
+        publication: record.publication,
+      };
+    }),
+  retryPublication: authenticatedProcedure
+    .input(publicationInput)
+    .mutation(async ({ ctx, input }) => {
+      const record = await requirePublication(
+        input.deploymentId,
+        ctx.userInfo.user.id,
+        ctx.userInfo.permissions?.includes("admin") ?? false,
+      );
+      if (!record.publication || record.status !== "success")
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "No started deployment image is available for publication recovery",
+        });
+      if (record.publication.status === "published")
+        return { deploymentId: input.deploymentId, queued: false };
+      try {
+        // The worker receives the deployment owner even when an administrator
+        // requests recovery. Host credentials and image selection stay server-side.
+        await cpApiClient.queuePublication(input.deploymentId, record.userId);
+      } catch {
+        throw new TRPCError({
+          code: "BAD_GATEWAY",
+          message:
+            "Publication recovery was not acknowledged. Check its status before retrying.",
+        });
+      }
+      return { deploymentId: input.deploymentId, queued: true };
+    }),
+  submission: authenticatedProcedure
+    .input(z.object({ submissionId: z.uuid() }))
+    .query(async ({ ctx, input }) => {
+      const accepted = await getDeploymentSubmission(
+        ctx.userInfo.user.id,
+        input.submissionId,
+      );
+      return accepted &&
+        (await getDeployment(accepted.deployment.id, ctx.userInfo.user.id))
+        ? submissionResult(accepted)
+        : null;
+    }),
+  dispatches: authenticatedProcedure
+    .input(z.object({ appId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!(await getUserApp(input.appId, ctx.userInfo.user.id)))
+        throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+      return getAppDispatches(input.appId, ctx.userInfo.user.id);
+    }),
   deploy: authenticatedProcedure
     .input(
       z.object({
+        submissionId: z.uuid().optional(),
         repoId: z
           .number({ error: "Repo Id must be a positive integer" })
           .nonnegative({ error: "Repo Id must be a positive integer" })
@@ -23,7 +123,12 @@ export const deploymentRouter = createTRPCRouter({
           .string({ error: "Owner must be a valid string" })
           .nonempty({ error: "Owner is required" })
           .nonoptional({ error: "Owner is required" }),
-        branch: z.string({ error: "Branch must be a string" }).optional(),
+        branch: z
+          .string({ error: "Branch must be a string" })
+          .trim()
+          .min(1, "Branch is required")
+          .optional(),
+        projectName: z.string().trim().min(1).max(80).optional(),
         frameworkConfig: z
           .object({
             framework: z
@@ -58,11 +163,21 @@ export const deploymentRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.userInfo.user.id;
+      const { submissionId, ...request } = input;
+      const submission = deploymentSubmission(userId, submissionId, {
+        operation: "deploy",
+        ...request,
+      });
+      if (await existingSubmission(submission))
+        return dispatchSubmission(submission);
       const { repoId, repo, owner, branch, envVars, frameworkConfig } = input;
 
       const app = await getAppByRepoId(repoId, userId);
 
       if (!app) {
+        if (await hasUserAppForRepo(repoId, userId)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+        }
         if (!frameworkConfig) {
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -71,21 +186,19 @@ export const deploymentRouter = createTRPCRouter({
           });
         }
 
-        const initialized = await initializeNewProjectAndDeploy({
+        await initializeNewProjectAndDeploy({
+          submission,
           userId,
           repoId,
           repo,
           owner,
+          projectName: input.projectName,
+          branch,
           envVars,
           frameworkConfig,
         });
 
-        return {
-          message: "Deployment Queued",
-          appId: initialized.app.id,
-          projectId: initialized.project.id,
-          deploymentId: initialized.deployment.id,
-        };
+        return dispatchSubmission(submission);
       }
 
       if (!branch?.trim()) {
@@ -95,7 +208,8 @@ export const deploymentRouter = createTRPCRouter({
         });
       }
 
-      const deployment = await deployProject({
+      await deployProject({
+        submission,
         userId,
         repoId,
         repo,
@@ -104,11 +218,6 @@ export const deploymentRouter = createTRPCRouter({
         appId: app.id,
       });
 
-      return {
-        message: "Deployment Queued",
-        appId: app.id,
-        projectId: app.projectId,
-        deploymentId: deployment.id,
-      };
+      return dispatchSubmission(submission);
     }),
 });

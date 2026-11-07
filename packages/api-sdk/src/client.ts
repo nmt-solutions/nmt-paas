@@ -4,6 +4,10 @@ import { APIResponse } from "./models/api-response";
 import { ValidationErrors } from "./models/deployment-queue";
 import { tryCatch } from "./utils/try-catch";
 import { AxiosHeaders } from "axios";
+import {
+  consumeRuntimeLogStream,
+  type RuntimeLogEvent,
+} from "./runtime-logs.js";
 
 export type AdminHostResponse = {
   data: {
@@ -65,10 +69,28 @@ export class ControlPanelAPIClient {
     return response.data;
   }
 
+  async queuePublication(deploymentId: number, userId: string): Promise<void> {
+    try {
+      const response = await axios.post<APIResponse<true, ValidationErrors>>(
+        `${this.baseUrl}/deployments/publication`,
+        { deploymentId, userId },
+        { headers: this.getHeaders(), timeout: 15_000 },
+      );
+      if (response.data.status !== "success" || response.data.data !== true)
+        throw new Error("Publication queue did not acknowledge recovery");
+    } catch {
+      // Transport exceptions may contain the bearer header or request config.
+      throw new Error(
+        "Publication recovery was not acknowledged. Check its status before retrying.",
+      );
+    }
+  }
+
   async streamRuntimeLogs(
     deploymentId: number,
     onLog: (log: string) => void,
     signal?: AbortSignal,
+    onEvent?: (event: RuntimeLogEvent) => void,
   ) {
     const response = await fetch(
       `${this.baseUrl}/logs/stream/${deploymentId}`,
@@ -86,48 +108,26 @@ export class ControlPanelAPIClient {
       throw new Error("Deployment log stream is not available.");
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-
-      if (done) {
-        break;
+    await consumeRuntimeLogStream(response.body, (event) => {
+      if (event.type === "runtime" && event.deploymentId !== deploymentId) {
+        throw new Error("Host returned a different runtime identity.");
       }
+      if (event.type === "log") onLog(event.text);
+      if (onEvent) onEvent(event);
+      else if (event.type === "error") throw new Error(event.message);
+    });
+  }
 
-      buffer += decoder.decode(value, {
-        stream: true,
-      });
-
-      const events = buffer.split("\n\n");
-
-      buffer = events.pop() ?? "";
-
-      for (const event of events) {
-        const dataLine = event
-          .split("\n")
-          .find((line) => line.startsWith("data:"));
-
-        if (!dataLine) {
-          continue;
-        }
-
-        const data = dataLine.slice("data:".length).trim();
-
-        if (!data) {
-          continue;
-        }
-
-        try {
-          onLog(JSON.parse(data));
-        } catch {
-          onLog(data);
-        }
-      }
-    }
+  async retireApp(appId: number, deploymentIds: number[]): Promise<boolean> {
+    const response = await axios.post<APIResponse<{ complete: boolean }>>(
+      `${this.baseUrl}/apps/${appId}/retire`,
+      { deploymentIds },
+      { headers: this.getHeaders(), timeout: 15_000 },
+    );
+    return (
+      response.data.status === "success" &&
+      response.data.data?.complete === true
+    );
   }
 
   async getAdminHost(): Promise<AdminHostResponse> {

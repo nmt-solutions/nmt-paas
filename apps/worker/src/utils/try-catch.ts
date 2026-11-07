@@ -1,3 +1,5 @@
+import { safeDiagnosticError } from "../services/diagnostics.js";
+
 type SyncFunction<T> = () => T;
 type AsyncFunction<T> = () => Promise<T>;
 
@@ -65,7 +67,7 @@ export function tryCatch<T, E = Error>(
     // Sync function
     return { data: result, error: null };
   } catch (error) {
-    console.error("Error in tryCatch:", error);
+    console.error("Error in tryCatch:", safeDiagnosticError(error));
     return { data: null, error: error as E };
   }
 }

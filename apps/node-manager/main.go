@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -17,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,10 +26,13 @@ import (
 
 const queuePrefix = "bull:deployment-queue:"
 
+var errDeploymentEnqueueConflict = errors.New("Deployment is already queued with a different payload.")
+
 type config struct{ port, apiKey, redisHost, redisPort, redisPassword string }
 type queuePayload struct {
 	UserID       string  `json:"userId"`
 	DeploymentID float64 `json:"deploymentId"`
+	Operation    string  `json:"operation,omitempty"`
 }
 type apiResponse struct {
 	Status     string `json:"status"`
@@ -58,6 +62,8 @@ func main() {
 	authenticated := router.Group("/api/v1")
 	authenticated.Use(requireAPIAuth(cfg.apiKey))
 	authenticated.POST("/deployments/queue", queueDeployment(cfg))
+	authenticated.POST("/deployments/publication", queuePublication(cfg))
+	authenticated.POST("/apps/:appId/retire", appRetirementHandler(dockerHTTPClient()))
 	authenticated.GET("/admin/host", adminHost)
 	authenticated.GET("/admin/docker/:resource", dockerResources)
 	authenticated.DELETE("/admin/docker/:resource/:id", deleteDockerResource)
@@ -137,12 +143,21 @@ func requireAPIAuth(key string) gin.HandlerFunc {
 	}
 }
 
-func queueDeployment(cfg config) gin.HandlerFunc {
+func queueDeployment(cfg config) gin.HandlerFunc  { return queueHandler(cfg, false) }
+func queuePublication(cfg config) gin.HandlerFunc { return queueHandler(cfg, true) }
+func queueHandler(cfg config, publication bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var raw json.RawMessage
-		if json.NewDecoder(c.Request.Body).Decode(&raw) != nil {
-			// express.json rejects malformed JSON before this handler. Valid JSON
-			// which is not an object reaches Zod and produces a form error.
+		decoder := json.NewDecoder(c.Request.Body)
+		if err := decoder.Decode(&raw); err != nil {
+			if err != io.EOF {
+				validationError(c, []string{"Invalid input: expected object, received invalid"}, nil)
+				return
+			}
+			raw = json.RawMessage(`{}`)
+		}
+		var trailing any
+		if decoder.Decode(&trailing) != io.EOF {
 			validationError(c, []string{"Invalid input: expected object, received invalid"}, nil)
 			return
 		}
@@ -157,7 +172,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 		userRaw, hasUserID := body["userId"]
 		if !hasUserID {
 			fields["userId"] = []string{"Invalid input: expected string, received undefined"}
-		} else if err := json.Unmarshal(userRaw, &userID); err != nil {
+		} else if jsonType(userRaw) != "string" || json.Unmarshal(userRaw, &userID) != nil {
 			fields["userId"] = []string{"Invalid input: expected string, received " + jsonType(userRaw)}
 		} else if userID == "" {
 			fields["userId"] = []string{"User id is required."}
@@ -165,7 +180,7 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 
 		var deploymentID float64
 		deploymentRaw, hasDeploymentID := body["deploymentId"]
-		if !hasDeploymentID || json.Unmarshal(deploymentRaw, &deploymentID) != nil || math.IsNaN(deploymentID) || math.IsInf(deploymentID, 0) {
+		if !hasDeploymentID || jsonType(deploymentRaw) != "number" || json.Unmarshal(deploymentRaw, &deploymentID) != nil || math.IsNaN(deploymentID) || math.IsInf(deploymentID, 0) {
 			fields["deploymentId"] = []string{"Deployment id must be a number."}
 		} else if deploymentID < 0 {
 			fields["deploymentId"] = []string{"Deployment id must be a +ve int."}
@@ -174,12 +189,33 @@ func queueDeployment(cfg config) gin.HandlerFunc {
 			validationError(c, []string{}, fields)
 			return
 		}
-		data, _ := json.Marshal(queuePayload{UserID: userID, DeploymentID: deploymentID})
-		if err := addBullMQJob(c.Request.Context(), cfg, string(data)); err != nil {
-			c.JSON(500, response(500, 500, err.Error(), nil, nil))
+		payload := queuePayload{UserID: userID, DeploymentID: deploymentID}
+		// Match Express's numeric identity without changing the accepted schema.
+		if deploymentID == 0 {
+			deploymentID = 0 // Normalize negative zero.
+		}
+		jobID := fmt.Sprintf("deployment-%016x", math.Float64bits(deploymentID))
+		message := "Deployment Queued"
+		if publication {
+			payload.Operation = "publish"
+			identity := make([]byte, 16)
+			if _, err := rand.Read(identity); err != nil {
+				c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
+				return
+			}
+			jobID = fmt.Sprintf("publication-%x", identity)
+			message = "Publication Queued"
+		}
+		data, _ := json.Marshal(payload)
+		if err := addBullMQJob(c.Request.Context(), cfg, jobID, string(data)); err != nil {
+			if errors.Is(err, errDeploymentEnqueueConflict) {
+				c.JSON(409, response(409, 409, err.Error(), nil, nil))
+				return
+			}
+			c.JSON(503, response(503, 503, "Deployment queue is unavailable.", nil, nil))
 			return
 		}
-		c.JSON(201, response(201, 201, "Deployment Queued", true, nil))
+		c.JSON(201, response(201, 201, message, true, nil))
 	}
 }
 func jsonType(raw json.RawMessage) string {
@@ -213,12 +249,20 @@ func validationError(c *gin.Context, formErrors []string, fields map[string][]st
 }
 
 // This writes BullMQ's Queue.add job representation so apps/worker can consume it unchanged.
-func addBullMQJob(ctx context.Context, cfg config, data string) error {
+func addBullMQJob(ctx context.Context, cfg config, jobID, data string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(cfg.redisHost, cfg.redisPort))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
 	reader := bufio.NewReader(conn)
 	if err := writeRedisCommand(conn, "AUTH", cfg.redisPassword); err != nil {
 		return err
@@ -227,12 +271,42 @@ func addBullMQJob(ctx context.Context, cfg config, data string) error {
 		return err
 	}
 	options := `{"attempts":3,"backoff":{"type":"exponential","delay":2000},"removeOnComplete":100,"removeOnFail":1000}`
-	script := `local id=redis.call('INCR',KEYS[1]);local max=redis.call('HGET',KEYS[3],'opts.maxLenEvents');if not max then max=10000;redis.call('HSET',KEYS[3],'opts.maxLenEvents',max) end;local target=KEYS[4];local paused=redis.call('HGET',KEYS[3],'paused');if paused then target=KEYS[5] end;local key=KEYS[2]..id;redis.call('HMSET',key,'name',ARGV[1],'data',ARGV[2],'opts',ARGV[3],'timestamp',ARGV[4],'delay',0,'priority',0);redis.call('XADD',KEYS[6],'*','event','added','jobId',id,'name',ARGV[1]);redis.call('LPUSH',target,id);if not paused then redis.call('ZADD',KEYS[7],0,'0') end;redis.call('XADD',KEYS[6],'MAXLEN','~',max,'*','event','waiting','jobId',id);return id`
-	args := []string{"EVAL", script, "7", queuePrefix + "id", queuePrefix, queuePrefix + "meta", queuePrefix + "wait", queuePrefix + "paused", queuePrefix + "events", queuePrefix + "marker", "deployment-queue", data, options, strconv.FormatInt(time.Now().UnixMilli(), 10)}
+	script := `
+local id = ARGV[5]
+local key = KEYS[2] .. id
+if redis.call('EXISTS', key) == 1 then
+  local existing = cjson.decode(redis.call('HGET', key, 'data'))
+  local incoming = cjson.decode(ARGV[2])
+  if redis.call('HGET', key, 'name') ~= ARGV[1]
+    or existing.userId ~= incoming.userId
+    or existing.deploymentId ~= incoming.deploymentId then
+    return -1
+  end
+  return 0
+end
+redis.call('INCR', KEYS[1])
+local max = redis.call('HGET', KEYS[3], 'opts.maxLenEvents')
+if not max then
+  max = 10000
+  redis.call('HSET', KEYS[3], 'opts.maxLenEvents', max)
+end
+local target = KEYS[4]
+local paused = redis.call('HGET', KEYS[3], 'paused')
+if paused then target = KEYS[5] end
+redis.call('HMSET', key, 'name', ARGV[1], 'data', ARGV[2], 'opts', ARGV[3], 'timestamp', ARGV[4], 'delay', 0, 'priority', 0)
+redis.call('XADD', KEYS[6], '*', 'event', 'added', 'jobId', id, 'name', ARGV[1])
+redis.call('LPUSH', target, id)
+if not paused then redis.call('ZADD', KEYS[7], 0, '0') end
+redis.call('XADD', KEYS[6], 'MAXLEN', '~', max, '*', 'event', 'waiting', 'jobId', id)
+return 1`
+	args := []string{"EVAL", script, "7", queuePrefix + "id", queuePrefix, queuePrefix + "meta", queuePrefix + "wait", queuePrefix + "paused", queuePrefix + "events", queuePrefix + "marker", "deployment-queue", data, options, strconv.FormatInt(time.Now().UnixMilli(), 10), jobID}
 	if err := writeRedisCommand(conn, args...); err != nil {
 		return err
 	}
-	_, err = readRedisReply(reader)
+	result, err := readRedisReply(reader)
+	if err == nil && result == "-1" {
+		return errDeploymentEnqueueConflict
+	}
 	return err
 }
 func writeRedisCommand(w io.Writer, args ...string) error {
@@ -268,11 +342,14 @@ func dockerHTTPClient() *http.Client {
 	}}}
 }
 func dockerRequest(ctx context.Context, method, path string) (*http.Response, error) {
+	return dockerRequestWithClient(dockerHTTPClient(), ctx, method, path)
+}
+func dockerRequestWithClient(client *http.Client, ctx context.Context, method, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	result, err := dockerHTTPClient().Do(req)
+	result, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -341,13 +418,6 @@ func adminHost(c *gin.Context) {
 	total, free := hostMemory()
 	c.JSON(200, response(200, 200, "Host status", gin.H{"health": "healthy", "cpuCount": runtime.NumCPU(), "memory": gin.H{"total": total, "used": total - free}, "docker": gin.H{"containers": len(containerList), "runningContainers": running, "images": len(imageList), "volumes": volumeCount, "disk": usage}, "info": info}, nil))
 }
-func hostMemory() (uint64, uint64) {
-	var info syscall.Sysinfo_t
-	if syscall.Sysinfo(&info) == nil {
-		return info.Totalram * uint64(info.Unit), info.Freeram * uint64(info.Unit)
-	}
-	return 0, 0
-}
 func dockerResources(c *gin.Context) {
 	resource := c.Param("resource")
 	path := map[string]string{"containers": "/containers/json?all=true", "images": "/images/json", "volumes": "/volumes"}[resource]
@@ -391,56 +461,97 @@ func deleteDockerResource(c *gin.Context) {
 }
 
 func streamRuntimeLogs(c *gin.Context) {
-	value, err := strconv.ParseFloat(c.Param("deploymentId"), 64)
-	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
-		c.JSON(400, response(400, 400, "Invalid deployment ID.", nil, nil))
-		return
-	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache, no-transform")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(200)
-	c.Writer.Flush()
-	var lock sync.Mutex
-	write := func(message string) {
-		lock.Lock()
-		defer lock.Unlock()
-		_, _ = c.Writer.WriteString(message)
-		c.Writer.Flush()
-	}
-	write(": connected\n\n")
-	logs, err := dockerRequest(c.Request.Context(), "GET", fmt.Sprintf("/containers/deployment-%d/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=100", int64(value)))
-	if err != nil {
-		write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
-		return
-	}
-	defer logs.Body.Close()
-	heartbeat := time.NewTicker(15 * time.Second)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for range heartbeat.C {
-			write(": heartbeat\n\n")
-		}
-	}()
-	defer func() { heartbeat.Stop(); <-done }()
-	streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+	runtimeLogsHandler(dockerHTTPClient(), 15*time.Second)(c)
 }
-func streamDockerLogs(reader io.Reader, onLine func(string)) {
+func runtimeLogsHandler(client *http.Client, heartbeatInterval time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer client.CloseIdleConnections()
+		value, err := strconv.ParseFloat(c.Param("deploymentId"), 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
+			c.JSON(400, response(400, 400, "Invalid deployment ID.", nil, nil))
+			return
+		}
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache, no-transform")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(200)
+		c.Writer.Flush()
+		var lock sync.Mutex
+		write := func(message string) {
+			lock.Lock()
+			defer lock.Unlock()
+			_, _ = c.Writer.WriteString(message)
+			c.Writer.Flush()
+		}
+		write(": connected\n\n")
+		write(fmt.Sprintf("event: runtime\ndata: {\"deploymentId\":%d}\n\n", int64(value)))
+		finish := func(err error) {
+			if c.Request.Context().Err() != nil {
+				return
+			}
+			reason := "eof"
+			if err != nil {
+				write("event: error\ndata: {\"message\":\"Failed to read deployment logs.\"}\n\n")
+				reason = "error"
+			}
+			write("event: end\ndata: {\"reason\":\"" + reason + "\"}\n\n")
+		}
+		logs, err := dockerRequestWithClient(client, c.Request.Context(), "GET", fmt.Sprintf("/containers/deployment-%d/logs?follow=true&stdout=true&stderr=true&timestamps=true&tail=100", int64(value)))
+		if err != nil {
+			finish(err)
+			return
+		}
+		defer logs.Body.Close()
+		heartbeat := time.NewTicker(heartbeatInterval)
+		stopHeartbeat := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				select {
+				case <-heartbeat.C:
+					write(": heartbeat\n\n")
+				case <-stopHeartbeat:
+					return
+				case <-c.Request.Context().Done():
+					return
+				}
+			}
+		}()
+		defer func() { heartbeat.Stop(); close(stopHeartbeat); <-done }()
+		err = streamDockerLogs(logs.Body, func(line string) { encoded, _ := json.Marshal(line); write("data: " + string(encoded) + "\n\n") })
+		finish(err)
+	}
+}
+func streamDockerLogs(reader io.Reader, onLine func(string)) error {
+	pending := map[byte][]byte{}
 	for {
 		header := make([]byte, 8)
 		if _, err := io.ReadFull(reader, header); err != nil {
-			return
+			if err == io.EOF {
+				for _, stream := range []byte{1, 2} {
+					if len(pending[stream]) > 0 {
+						onLine(string(pending[stream]))
+					}
+				}
+				return nil
+			}
+			return err
 		}
 		payload := make([]byte, binary.BigEndian.Uint32(header[4:]))
 		if _, err := io.ReadFull(reader, payload); err != nil {
-			return
+			return err
 		}
-		for _, line := range strings.Split(string(payload), "\n") {
-			if line != "" {
-				onLine(line)
+		stream := header[0]
+		pending[stream] = append(pending[stream], payload...)
+		for {
+			newline := bytes.IndexByte(pending[stream], '\n')
+			if newline < 0 {
+				break
 			}
+			onLine(string(pending[stream][:newline]))
+			pending[stream] = pending[stream][newline+1:]
 		}
 	}
 }

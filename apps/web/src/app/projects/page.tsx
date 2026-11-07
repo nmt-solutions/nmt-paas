@@ -11,7 +11,7 @@ import Link from "next/link";
 import Empty from "@/components/states/empty";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useTRPC } from "@/trpc/client";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,9 +23,12 @@ import {
 import toast from "@/components/toast/toast";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { deploymentStatusLabel } from "@/utils/deployment-status";
+import { ProjectRetirementPanel } from "@/components/projects/project-retirement-panel";
 
 const ProjectsPage = () => {
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const {
     data: projects,
     isLoading,
@@ -76,7 +79,7 @@ const ProjectsPage = () => {
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <DropdownMenu>
-                    <DropdownMenuTrigger>
+                    <DropdownMenuTrigger asChild>
                       <Button variant="ghost">
                         <MoreVertical className="text-primary cursor-pointer" />
                       </Button>
@@ -110,7 +113,7 @@ const ProjectsPage = () => {
                       <div>
                         <p className="font-medium">{app.appName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {latest?.status ?? "Not deployed"}
+                          {deploymentStatusLabel(latest?.status ?? "Not deployed")}
                         </p>
                       </div>
                       <ArrowUpRight className="size-4 text-muted-foreground transition group-hover:text-primary" />
@@ -122,21 +125,23 @@ const ProjectsPage = () => {
           ))}
         </div>
       )}
+      <ProjectRetirementPanel />
       <ConfirmDialog
         open={Boolean(projectToDelete)}
         onOpenChange={(open) => !open && setProjectToDelete(null)}
         title={`Delete ${projectToDelete?.name ?? "project"}?`}
-        description="This removes the project and its applications. This action cannot be undone."
+        description="This retires the project and every app, then removes their owned runtimes. Incomplete cleanup stays visible here and can be retried."
         confirmLabel="Delete project"
         pending={isPending}
         onConfirm={() => {
           if (!projectToDelete) return;
           const current = projectToDelete;
           setDeletingProjectIds((prev) => [...prev, current.id]);
-          deleteProject({ projectId: current.id }, { onSuccess: () => {
+          deleteProject({ projectId: current.id }, { onSuccess: (result) => {
             setDeletingProjectIds((prev) => prev.filter((id) => id !== current.id));
             setProjectToDelete(null);
-            toast({ title: "Project deleted", description: `${current.name} was removed.`, variant: "success" });
+            toast({ title: "Project retired", description: result.retirement?.message ?? "Runtime cleanup pending.", variant: "success" });
+            void queryClient.invalidateQueries({ queryKey: trpc.project.retired.queryKey() });
             refetch();
           }, onError: (error) => { setDeletingProjectIds((prev) => prev.filter((id) => id !== current.id)); toast({ title: "Could not delete project", description: error.message, variant: "error" }); }});
         }}

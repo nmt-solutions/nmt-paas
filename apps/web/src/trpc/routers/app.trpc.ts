@@ -1,4 +1,3 @@
-import cpApiClient from "@/services/cp-api-client";
 import { saveEnvVars } from "@/services/env-vars";
 import {
   getAppLatestDeployment,
@@ -13,33 +12,20 @@ import { updateFrameworkConfig } from "@repo/database/access-layer/framework-con
 import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { authenticatedProcedure, createTRPCRouter } from "../init";
-import { deleteProject } from "@repo/database/access-layer/project.dal";
+import { retireApp, retirementStatus } from "@/services/apps";
 import { redeployApp } from "@/services/projects";
+import {
+  deploymentSubmission,
+  dispatchSubmission,
+  existingSubmission,
+} from "@/services/deployment-dispatch";
+import { readDeploymentLogs } from "@repo/database/access-layer/deployment-logs.dal";
+import {
+  DEPLOYMENT_LOG_MAX_PAGE_SIZE,
+  DEPLOYMENT_LOG_PAGE_SIZE,
+} from "@repo/database/access-layer/deployment-log-limits";
 
 const appIdInput = z.object({ appId: z.number().int().positive() });
-
-const withTimeout = <T>(operation: Promise<T>, milliseconds: number) =>
-  new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new TRPCError({
-          code: "TIMEOUT",
-          message: "The deployment service did not respond in time. Please try again.",
-        }),
-      );
-    }, milliseconds);
-
-    operation.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 
 const requireApp = async (appId: number, userId: string) => {
   const app = await getUserApp(appId, userId);
@@ -49,6 +35,39 @@ const requireApp = async (appId: number, userId: string) => {
 };
 
 export const appRouter = createTRPCRouter({
+  deploymentLogs: authenticatedProcedure
+    .input(
+      appIdInput
+        .extend({
+          deploymentId: z.number().int().positive(),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(DEPLOYMENT_LOG_MAX_PAGE_SIZE)
+            .default(DEPLOYMENT_LOG_PAGE_SIZE),
+          before: z.number().int().positive().optional(),
+          after: z.number().int().nonnegative().optional(),
+        })
+        .refine(
+          (input) => input.before === undefined || input.after === undefined,
+          {
+            message: "Choose either before or after",
+          },
+        ),
+    )
+    .query(async ({ ctx, input }) => {
+      const page = await readDeploymentLogs({
+        ...input,
+        userId: ctx.userInfo.user.id,
+      });
+      if (!page)
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Deployment not found",
+        });
+      return page;
+    }),
   get: authenticatedProcedure
     .input(appIdInput)
     .query(async ({ ctx, input }) => {
@@ -114,50 +133,41 @@ export const appRouter = createTRPCRouter({
   delete: authenticatedProcedure
     .input(appIdInput)
     .mutation(async ({ ctx, input }) => {
-      const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const activeDeployment = [...app.deployments]
-        .filter((deployment) => deployment.status === "success")
-        .sort((a, b) => b.id - a.id)[0];
-      if (activeDeployment) {
-        try {
-          await cpApiClient.deleteDockerResource(
-            "containers",
-            `deployment-${activeDeployment.id}`,
-          );
-        } catch (error) {
-          console.warn(
-            "Unable to remove the app container during deletion",
-            error,
-          );
-        }
-      }
-      await updateApp(input.appId, ctx.userInfo.user.id, {
-        resourceStatus: "inactive",
-      });
-      await deleteProject(app.projectId, ctx.userInfo.user.id);
-      return { success: true };
+      return retireApp(input.appId, ctx.userInfo.user.id);
     }),
-  redeploy: authenticatedProcedure
+  retirementStatus: authenticatedProcedure
     .input(appIdInput)
+    .query(({ ctx, input }) =>
+      retirementStatus(input.appId, ctx.userInfo.user.id),
+    ),
+  redeploy: authenticatedProcedure
+    .input(appIdInput.extend({ submissionId: z.uuid().optional() }))
     .mutation(async ({ ctx, input }) => {
       const app = await requireApp(input.appId, ctx.userInfo.user.id);
-      const previousDeployment = [...app.deployments].sort((a, b) => b.id - a.id)[0];
+      const submission = deploymentSubmission(
+        ctx.userInfo.user.id,
+        input.submissionId,
+        { operation: "redeploy", appId: input.appId },
+      );
+      if (await existingSubmission(submission))
+        return dispatchSubmission(submission);
+      const previousDeployment = [...app.deployments].sort(
+        (a, b) => b.id - a.id,
+      )[0];
       if (!previousDeployment) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "This app has no previous deployment to redeploy.",
         });
       }
-      const deployment = await withTimeout(
-        redeployApp({
-          userId: ctx.userInfo.user.id,
-          appId: app.id,
-          repoId: app.repoId,
-          branch: previousDeployment.branch,
-        }),
-        20_000,
-      );
-      return { deploymentId: deployment.id, branch: previousDeployment.branch };
+      await redeployApp({
+        submission,
+        userId: ctx.userInfo.user.id,
+        appId: app.id,
+        repoId: app.repoId,
+        branch: previousDeployment.branch,
+      });
+      return dispatchSubmission(submission);
     }),
   getLatestSuccessDeployment: authenticatedProcedure
     .input(appIdInput)

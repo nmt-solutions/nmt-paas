@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "baseUrl": "../../..",
+    "paths": {
+      "@/*": ["apps/web/src/*"],
+      "@repo/database": ["packages/database/src/index.ts"],
+      "@repo/database/schema": ["packages/database/src/schema.ts"],
+      "@repo/database/access-layer/*": [
+        "packages/database/src/access-layer/*.ts"
+      ]
+    }
+  }
+}

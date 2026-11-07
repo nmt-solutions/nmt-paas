@@ -21,10 +21,36 @@ if (args.length === 0) {
 const [command, ...dockerArgs] = args;
 
 function run(command, args = [], options = {}) {
-  return execFileSync(command, args, {
-    stdio: "inherit",
+  const result = spawnSync(command, args, {
+    stdio: ["inherit", "pipe", "pipe"],
+    maxBuffer: 16 * 1024 * 1024,
     ...options,
   });
+  if (result.stdout)
+    process.stdout.write(redact(result.stdout.toString(), options.env));
+  if (result.stderr)
+    process.stderr.write(redact(result.stderr.toString(), options.env));
+  if (result.error || result.status !== 0) {
+    const outcome = Number.isInteger(result.status)
+      ? `exit code ${result.status}`
+      : (result.error?.code ?? result.signal ?? "process error");
+    throw new Error(`${command} ${args[0] ?? ""} failed (${outcome}).`);
+  }
+  return result.stdout;
+}
+
+function redact(message, extraEnv = {}) {
+  for (const [key, value] of Object.entries({ ...process.env, ...extraEnv })) {
+    if (
+      value &&
+      /secret|token|password|private_key|api_key|database_url|encryption_key|(?:^|_)pat$/i.test(
+        key,
+      )
+    ) {
+      message = message.replaceAll(value, "[REDACTED]");
+    }
+  }
+  return message.replace(/(https?:\/\/)[^\s/@]+@/gi, "$1[REDACTED]@");
 }
 
 function docker(args, options = {}) {
@@ -48,10 +74,7 @@ function getComposeFile(project) {
 function compose(project, args = [], env = {}) {
   const { projectDir, composeFile } = getComposeFile(project);
 
-  console.log("Worker Env Vars:", {
-    ...process.env,
-    ...env,
-  });
+  console.log(`Compose ${project}: ${args.join(" ")}`);
 
   return docker(["compose", "-f", composeFile, ...args], {
     cwd: projectDir,
@@ -352,7 +375,7 @@ try {
   }
 } catch (error) {
   console.error(
-    `\nError: ${error instanceof Error ? error.message : String(error)}`,
+    `\nError: ${redact(error instanceof Error ? error.message : String(error))}`,
   );
 
   process.exit(1);

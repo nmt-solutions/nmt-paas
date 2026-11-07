@@ -1,6 +1,7 @@
 import { getEnvVars } from "@repo/database/access-layer/env-vars.dal";
 import env from "../env/vars.js";
 import crypto from "crypto";
+import { registerDiagnosticSecrets } from "./diagnostics.js";
 
 const ALGORITHM = "aes-256-gcm";
 // const IV_LENGTH = 12; // Recommended for GCM
@@ -24,7 +25,7 @@ export function decrypt(payload: string): string {
 
   const [ivB64, authTagB64, encryptedB64] = payload.split(":");
 
-  if (!ivB64 || !authTagB64 || !encryptedB64) {
+  if (!ivB64 || !authTagB64 || encryptedB64 === undefined) {
     throw new Error("Invalid encrypted payload");
   }
 
@@ -47,10 +48,12 @@ export function decrypt(payload: string): string {
 export const fetchEnvVars = async (
   projectId: number,
   env: "production" | "preview",
-): Promise<string> => {
+): Promise<{ key: string; value: string }[]> => {
   const envVars = await getEnvVars(projectId, env);
 
-  return envVars
-    .map((envVar) => `${envVar.key}=${decrypt(envVar.encryptedValue)}`)
-    .join("\n");
+  return envVars.map((envVar) => {
+    const value = decrypt(envVar.encryptedValue);
+    registerDiagnosticSecrets(value);
+    return { key: envVar.key, value };
+  });
 };

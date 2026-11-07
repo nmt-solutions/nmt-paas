@@ -3,6 +3,7 @@
 import { FrameworkConfigPreset } from "@/models/framework";
 import { useTRPC } from "@/trpc/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useDeploymentSubmission } from "@/utils/use-deployment-submission";
 import {
   ChevronDown,
   File,
@@ -77,6 +78,12 @@ const ImportRepository = ({
   const [installCommand, setInstallCommand] = useState("");
 
   const trpc = useTRPC();
+  const submissionScope = `import:${repoId}:${branch}`;
+  const submission = useDeploymentSubmission(
+    submissionScope,
+    "Deployment queued",
+  );
+  const isCheckingSubmission = submission.isResolving;
   const router = useRouter();
 
   const { data, isPending, isError, error } = useQuery(
@@ -151,7 +158,27 @@ const ImportRepository = ({
     });
   };
 
-  const deployProject = () => {
+  const showSubmission = (result: {
+    outcome: "accepted" | "uncertain" | "rejected";
+    projectId: number;
+    appId: number;
+    deploymentId: number;
+    message: string;
+  }) => {
+    submission.present(result);
+    router.push(
+      `/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`,
+    );
+  };
+
+  const deployProject = async () => {
+    const resolved = await submission.resolve();
+    if (!resolved) return;
+    const { submissionId, result } = resolved;
+    if (result) {
+      showSubmission(result);
+      return;
+    }
     const envVarsArray = envVarsFields
       .map((id) => envVars[id])
       .filter((ev) => ev?.key && ev?.value)
@@ -168,35 +195,32 @@ const ImportRepository = ({
 
     deploy(
       {
+        submissionId,
         repoId: parseInt(repoId),
         repo,
         owner: data?.repository.owner.name ?? "",
+        projectName,
         branch,
         envVars: envVarsArray,
         frameworkConfig: {
           ...frameworkPreset,
-          rootDirectory: rootDirEnabled ? rootDir : frameworkPreset.rootDirectory,
-          installCommand: installCommandEnabled ? installCommand : frameworkPreset.installCommand,
-          buildCommand: buildCommandEnabled ? buildCommand : frameworkPreset.buildCommand,
-          outputDirectory: outputDirectoryEnabled ? outputDirectory : frameworkPreset.outputDirectory,
+          rootDirectory: rootDirEnabled
+            ? rootDir
+            : frameworkPreset.rootDirectory,
+          installCommand: installCommandEnabled
+            ? installCommand
+            : frameworkPreset.installCommand,
+          buildCommand: buildCommandEnabled
+            ? buildCommand
+            : frameworkPreset.buildCommand,
+          outputDirectory: outputDirectoryEnabled
+            ? outputDirectory
+            : frameworkPreset.outputDirectory,
         },
       },
       {
-        onError: (err) => {
-          toast({
-            title: "Deployment Error",
-            description: err.message,
-            variant: "error",
-          });
-        },
-        onSuccess: (result) => {
-          toast({
-            title: "Deployment Queued",
-            description: "Opening the deployment details and live logs.",
-            variant: "success",
-          });
-          router.push(`/projects/${result.projectId}/apps/${result.appId}?deployment=${result.deploymentId}`);
-        },
+        onError: submission.unconfirmed,
+        onSuccess: showSubmission,
       },
     );
   };
@@ -583,7 +607,7 @@ const ImportRepository = ({
 
         <div className="my-4">
           <Button
-            disabled={isDeploying}
+            disabled={isDeploying || isCheckingSubmission}
             className="w-full rounded-lg"
             onClick={deployProject}
           >

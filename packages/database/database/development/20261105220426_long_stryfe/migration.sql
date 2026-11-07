@@ -1,0 +1,1 @@
+ALTER TABLE "Apps" ADD COLUMN "retirement" jsonb;

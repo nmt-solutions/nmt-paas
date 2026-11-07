@@ -4,6 +4,12 @@ import "dotenv/config";
 
 const EnvVarsSchema = z.object({
   APP_ENV: z.enum(["development", "production"]).default("development"),
+  REDIS_HOST: z.string().nonempty(),
+  REDIS_PORT: z
+    .string()
+    .nonempty()
+    .transform((value) => Number.parseInt(value, 10)),
+  REDIS_PASSWORD: z.string().nonempty(),
 });
 
 const {

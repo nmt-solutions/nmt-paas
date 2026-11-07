@@ -1,14 +1,15 @@
 import { tryCatch } from "@/utils/try-catch";
-import { createAppDomains } from "@repo/database/access-layer/app-domains.dal";
-import { createApp } from "@repo/database/access-layer/apps.dal";
-import { createDeployment } from "@repo/database/access-layer/deployment.dal";
-import { createFrameworkConfig } from "@repo/database/access-layer/framework-config.dal";
-import { createProject } from "@repo/database/access-layer/project.dal";
+import { getActiveApp } from "@repo/database/access-layer/apps.dal";
+import {
+  admitDeployment,
+  type Submission,
+} from "@repo/database/access-layer/deployment-dispatch.dal";
+import { createProjectImport } from "@repo/database/access-layer/project-import.dal";
 import { TRPCError } from "@trpc/server";
 import { Octokit } from "octokit";
-import { saveEnvVars } from "./env-vars";
+import { encrypt } from "./env-vars";
 import { getUserGithubOctokit } from "./github";
-import cpApiClient from "./cp-api-client";
+import { admissionError } from "./deployment-dispatch";
 
 export const deployProject = async (params: {
   octokit?: Octokit;
@@ -18,8 +19,17 @@ export const deployProject = async (params: {
   repo: string;
   branch: string;
   appId: number;
+  submission: Submission;
 }) => {
   const { appId, userId, owner, repoId, repo, branch } = params;
+
+  const requireActiveApp = async () => {
+    const app = await getActiveApp(appId, userId);
+    if (!app || app.repoId !== repoId) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "App not found" });
+    }
+  };
+  await requireActiveApp();
 
   const octokit =
     params.octokit ?? (await getUserGithubOctokit(userId)).octokit;
@@ -41,32 +51,30 @@ export const deployProject = async (params: {
 
   const commit = commitsData.data;
 
-  const deployment = await createDeployment({
-    appId,
-    branch: branch,
-    commit: commit.sha,
-    createdBy: userId,
-    userId,
-    repoId,
-    env: "production",
-  });
+  // Repository access can outlive the app's eligibility. Recheck before admission.
+  await requireActiveApp();
+  const { data: deployment, error: admissionFailure } = await tryCatch(
+    admitDeployment(
+      {
+        appId,
+        branch: branch,
+        commit: commit.sha,
+        createdBy: userId,
+        userId,
+        repoId,
+        env: "production",
+      },
+      params.submission,
+    ),
+  );
+
+  if (admissionFailure) throw admissionError(admissionFailure);
 
   if (!deployment) {
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
       message: "Unable to create a deployment",
     });
-  }
-
-  const response = await cpApiClient.queueDeployment(
-    deployment.id,
-    params.userId,
-  );
-
-  console.log("response", response);
-
-  if (response.status === "error") {
-    throw new Error(response.message);
   }
 
   return deployment;
@@ -78,15 +86,19 @@ export const redeployApp = async ({
   appId,
   repoId,
   branch,
+  submission,
 }: {
   userId: string;
   appId: number;
   repoId: number;
   branch: string;
+  submission: Submission;
 }) => {
   const { octokit } = await getUserGithubOctokit(userId);
   const { data: repository, error } = await tryCatch(
-    octokit.request("GET /repositories/{repository_id}", { repository_id: repoId }),
+    octokit.request("GET /repositories/{repository_id}", {
+      repository_id: repoId,
+    }),
   );
 
   if (error || !repository.data.owner?.login) {
@@ -104,6 +116,7 @@ export const redeployApp = async ({
     owner: repository.data.owner.login,
     repo: repository.data.name,
     branch,
+    submission,
   });
 };
 
@@ -112,13 +125,18 @@ export const initializeNewProjectAndDeploy = async ({
   repoId,
   owner,
   repo,
+  projectName,
+  branch,
   envVars,
   frameworkConfig,
+  submission,
 }: {
   userId: string;
   repoId: number;
   owner: string;
   repo: string;
+  projectName?: string;
+  branch?: string;
   envVars: { key: string; value: string }[];
   frameworkConfig: {
     framework: string;
@@ -129,6 +147,7 @@ export const initializeNewProjectAndDeploy = async ({
     outputDirectory: string;
     port: number;
   };
+  submission: Submission;
 }) => {
   const { octokit } = await getUserGithubOctokit(userId);
 
@@ -145,96 +164,47 @@ export const initializeNewProjectAndDeploy = async ({
 
   const repository = repoData.data;
 
-  const project = await createProject({
-    name: `${repository.html_url.split("/").at(-1)?.toLowerCase() ?? ""}-project`,
-    createdBy: userId,
-    userId,
-  });
-
-  if (!project) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unable to create a project",
-    });
-  }
-
-  const { data: app, error } = await tryCatch(
-    createApp({
-      repoId,
-      projectId: project.id,
-      createdBy: userId,
-      appName: repository.html_url
-        .split("/")
-        .at(-1)
-        ?.toLowerCase()
-        ?.replace(" ", "-") as string,
-      gitProvider: "github",
+  const selectedBranch = branch ?? repository.default_branch;
+  const { data: commitsData, error: commitsError } = await tryCatch(
+    octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", {
+      owner: repository.owner.login,
+      repo: repository.name,
+      ref: selectedBranch,
     }),
   );
-
-  if (!app) {
-    console.error("Error creating app:", error);
+  if (commitsError) {
     throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unable to create an app",
+      code: "BAD_GATEWAY",
+      message: "Unable to get repository commit",
     });
   }
 
-  const { error: appDomainError } = await tryCatch(
-    createAppDomains(app.id, app.appName, userId),
+  const { data: initialized, error: setupError } = await tryCatch(
+    // Keep the established encrypted format; plaintext never enters persistence.
+    Promise.resolve().then(() =>
+      createProjectImport({
+        submission,
+        userId,
+        repoId,
+        projectName: projectName ?? `${repository.name.toLowerCase()}-project`,
+        appName: repository.name.toLowerCase().replace(" ", "-"),
+        branch: selectedBranch,
+        commit: commitsData.data.sha,
+        frameworkConfig,
+        envVars: envVars.map(({ key, value }) => ({
+          key,
+          encryptedValue: encrypt(value),
+        })),
+      }),
+    ),
   );
-
-  if (appDomainError) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unable to generate a domain",
-    });
-  }
-
-  const fc = await createFrameworkConfig({
-    appId: app.id,
-    framework: frameworkConfig.framework,
-    rootDirectory: frameworkConfig.rootDirectory,
-    installCommand: frameworkConfig.installCommand,
-    buildCommand: frameworkConfig.buildCommand,
-    startCommand: frameworkConfig.startCommand,
-    outputDirectory: frameworkConfig.outputDirectory,
-    port: frameworkConfig.port,
-    createdBy: userId,
-  });
-
-  if (!fc) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unable to create framework config",
-    });
-  }
-
-  if (envVars.length > 0) {
-    const savedEnvVars = await saveEnvVars(
-      envVars,
-      project.id,
-      "production",
-      userId,
+  if (setupError) {
+    // Database errors can include SQL parameters and encrypted configuration.
+    throw admissionError(
+      setupError,
+      "Unable to initialize project. Check your projects before retrying.",
     );
-
-    if (savedEnvVars.length !== envVars.length) {
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: "Unable to save all environment variables",
-      });
-    }
   }
 
-  const deployment = await deployProject({
-    octokit,
-    userId,
-    repoId,
-    repo,
-    owner,
-    branch: repository.default_branch,
-    appId: app.id,
-  });
-
-  return { app, project, deployment };
+  return initialized;
 };
